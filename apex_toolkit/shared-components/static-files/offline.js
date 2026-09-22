@@ -44,12 +44,7 @@
     /* ---------- Hilfen ---------- */
 
     const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
-    let sayTimer = 0;
-    const say = text => {                         // Hinweis oben; verschwindet nach 5 s wieder (verdeckt sonst die Statusanzeige)
-        apex.message.showPageSuccess(text);
-        clearTimeout(sayTimer);
-        sayTimer = setTimeout(() => apex.message.hidePageSuccess(), 5000);
-    };
+    const say = text => apex.message.showPageSuccess(text);   // Aussehen: messages.css, Ausblenden: APEX (Auto-Dismiss)
     const isDelete = request => /DELETE/i.test(request || "");
     const saves = request => !!request && !apex.item(request).node;         // Enter- oder Auswahllisten-Submit speichert nicht
     const isForm = () => document.body.classList.contains("offline-form");   // Page > Appearance > CSS Classes
@@ -164,7 +159,7 @@
         }
         if (navigator.storage && navigator.storage.persist) { navigator.storage.persist(); }
         apex.page.cancelWarnOnUnsavedChanges();
-        leave("Offline gespeichert. Die Übertragung erfolgt automatisch, sobald der Server erreichbar ist.");
+        leave("Offline gespeichert – wird automatisch übertragen.");
     }
 
     function leave(text) {                        // wie der übliche Verzweig nach dem Speichern
@@ -197,7 +192,7 @@
     apex.jQuery.ajaxPrefilter(o => { if (isForm() && /wwv_flow\.accept/.test(o.url || "") && !o.timeout) { o.timeout = 30000; } });
 
     async function onSubmitLost(status) {
-        if (!status && await check()) { say("Die Übertragung wurde unterbrochen. Bitte prüfen und erneut speichern."); return; }
+        if (!status && await check()) { say("Übertragung unterbrochen – bitte erneut speichern."); return; }
         if (isDelete(lastRequest) || apex.page.validate()) { saveOffline(lastRequest, true); }
     }
 
@@ -222,7 +217,7 @@
             draft = null;
             return;
         }
-        say(IS_COPY ? "Offline-Entwurf geladen." : "Offline erfasste Werte eingesetzt - bitte prüfen und speichern.");
+        say(IS_COPY ? "Offline-Entwurf geladen." : "Offline-Werte eingesetzt – bitte prüfen und speichern.");
         const problems = [                        // ohne "unsafe: false" maskiert APEX den Text (Server-Wert!)
             ...result.conflicts.map(([name, current]) => ({ type: "error", location: ["inline", "page"], pageItem: name,
                 message: "Auf dem Server inzwischen: " + (current || "(leer)") })),
@@ -269,7 +264,7 @@
             refresh();
         }
         if (sent) {
-            const text = sent === 1 ? "1 offline erfasster Vorgang übertragen." : sent + " offline erfasste Vorgänge übertragen.";
+            const text = sent === 1 ? "1 Offline-Erfassung übertragen." : sent + " Offline-Erfassungen übertragen.";
             // neu laden zeigt den aktuellen Stand - nicht, solange etwas bearbeitet wird oder ein Dialog offen ist
             if (apex.page.isChanged() || document.querySelector(".ui-dialog--apex")) {
                 say(text);
@@ -425,7 +420,7 @@
                 dialog.close();
                 await Promise.all(list.filter(x => x.status === "fehler" || x.status === "konflikt")
                     .map(x => putDraft({ ...x, status: "wartet", info: "" })));
-                if (await check()) { sync(); } else { say("Der Server ist nicht erreichbar."); }
+                if (await check()) { sync(); } else { say("Server nicht erreichbar."); }
             }
             if (act === "close") { dialog.close(); }
         });

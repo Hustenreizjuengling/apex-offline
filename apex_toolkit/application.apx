@@ -1,6 +1,6 @@
 app ERFASSUNG (
     name: Offline-Erfassung
-    version: 1.2.0
+    version: 1.3.0
     logo {
         type: text
         text: Offline-Erfassung
@@ -32,6 +32,7 @@ app ERFASSUNG (
         currentTheme: @universal-theme
         globalPage: 0
         addBuiltWithApexToFooter: false
+        autoDismissSuccessMessages: true
     }
     appFormatMasks {
         date: DD.MM.YYYY
@@ -40,7 +41,10 @@ app ERFASSUNG (
         fileUrls: #APP_FILES#offline.js
     }
     css {
-        fileUrls: #APP_FILES#offline.css
+        fileUrls: [
+            #APP_FILES#offline.css
+            #APP_FILES#messages.css
+        ]
     }
     authentication {
         scheme: @oracle-apex-accounts

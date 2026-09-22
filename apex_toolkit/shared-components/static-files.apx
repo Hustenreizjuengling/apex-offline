@@ -13,6 +13,11 @@ file "offline.css" (
     charSet: utf-8
 )
 
+file "messages.css" (
+    mimeType: text/css
+    charSet: utf-8
+)
+
 file "vendor/barcode-detector/ponyfill.js" (
     mimeType: application/javascript
     charSet: utf-8

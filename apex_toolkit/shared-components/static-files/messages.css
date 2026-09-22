@@ -1,0 +1,51 @@
+/* messages.css - Seitenmeldungen (Erfolg und Fehler) oben mittig und kompakt
+ *
+ * Universal Theme zeigt Seitenmeldungen groß oben rechts. Hier erscheinen sie oben in der Mitte, bündig am
+ * Rand und nur so breit wie der Text. Der APEX-Container wird zum unsichtbaren, zentrierenden Rahmen.
+ * Das Ausblenden übernimmt APEX selbst: Application > User Interface > Auto-Dismiss Success Messages
+ * (application.apx: autoDismissSuccessMessages). Fehler bleiben stehen, bis sie geschlossen oder behoben
+ * sind; Fehler an einzelnen Feldern sind nicht betroffen.
+ */
+#APEX_SUCCESS_MESSAGE,
+#APEX_ERROR_MESSAGE {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1200;
+    display: flex; justify-content: center;
+    pointer-events: none;
+}
+#APEX_SUCCESS_MESSAGE.u-hidden,
+#APEX_ERROR_MESSAGE.u-hidden { display: none; }
+
+#APEX_SUCCESS_MESSAGE .t-Alert--page,
+#APEX_ERROR_MESSAGE .t-Alert--page {
+    --ut-alert-icon-padding: .5rem;
+    --ut-alert-icon-size: 1rem;
+    position: static;
+    width: fit-content; min-width: 0; max-width: min(36rem, calc(100vw - 1rem));
+    margin: 0;
+    pointer-events: auto;
+    border-radius: 0 0 .5rem .5rem;
+    box-shadow: 0 .5rem 1.5rem rgba(0, 0, 0, .2);
+}
+#APEX_SUCCESS_MESSAGE .t-Alert--page .t-Alert-content,
+#APEX_ERROR_MESSAGE .t-Alert--page .t-Alert-content { padding: .25rem .5rem; flex-grow: 0; }
+#APEX_SUCCESS_MESSAGE .t-Alert--page .t-Alert-title,
+#APEX_ERROR_MESSAGE .t-Alert--page .t-Alert-title {
+    --ut-alert-title-font-size: .875rem;
+    line-height: 1.25rem;
+    padding-block: .25rem;
+    margin-inline-end: .25rem;
+}
+#APEX_SUCCESS_MESSAGE .t-Alert--page .t-Alert-buttons,
+#APEX_ERROR_MESSAGE .t-Alert--page .t-Alert-buttons { padding-inline-end: .5rem; }
+
+/* Erfolg: dezente Farbe statt Vollfarbe, ohne Schließen-Knopf (blendet sich selbst aus) */
+#APEX_SUCCESS_MESSAGE .t-Alert--page.t-Alert--success {
+    background-color: var(--ut-component-background-color, #fff);
+    color: var(--ut-body-text-color, #222);
+    border-left: 4px solid #2e9e4f;
+}
+#APEX_SUCCESS_MESSAGE .t-Alert--page .t-Alert-icon .t-Icon { color: #2e9e4f; }
+#APEX_SUCCESS_MESSAGE .t-Alert--page .t-Alert-buttons { display: none; }
+
+/* Fehler: Schließen-Knopf innerhalb der Box, weil die Box am Seitenrand anliegt */
+#APEX_ERROR_MESSAGE .t-Alert--page .t-Button.t-Button--closeAlert { position: static; }

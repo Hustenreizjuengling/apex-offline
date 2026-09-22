@@ -31,6 +31,7 @@ der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst
 | `offline.js` | Entwürfe, Übertragung, Statusanzeige, Unterschrift, Scan, Vorab-Laden |
 | `offline-sw.js` | Service-Worker-Hook: Seiten speichern und offline ausliefern |
 | `offline.css` | Statusanzeige, Unterschriftenfeld, Scanner, Druck |
+| `messages.css` | optional: Seitenmeldungen oben mittig und kompakt (unabhängig von der Offline-Schicht) |
 | `vendor/barcode-detector/` | optional: Barcode-/QR-Decoder für iPhone, Windows, Firefox ([Fremdcode](THIRD-PARTY-NOTICES.md)) |
 
 Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur die Beispieltabelle an.
@@ -41,7 +42,9 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
    hochladen, für das Scannen auf iPhone/Windows zusätzlich die drei Dateien aus
    `vendor/barcode-detector/` unter demselben Pfad (`zxing_reader.wasm` mit MIME-Typ `application/wasm`).
 2. **Application Definition → User Interface:** JavaScript File URLs `#APP_FILES#offline.js`,
-   CSS File URLs `#APP_FILES#offline.css`.
+   CSS File URLs `#APP_FILES#offline.css` (und `#APP_FILES#messages.css`), *Auto-Dismiss Success
+   Messages* einschalten – Erfolgsmeldungen erscheinen dann oben mittig und verschwinden nach 5 Sekunden,
+   Fehlermeldungen bleiben stehen, bis sie geschlossen oder behoben sind.
 3. **Progressive Web App:** aktivieren und installierbar machen; *Service Worker Hooks* → File URL
    `#APP_FILES#offline-sw.js`. Voraussetzung: HTTPS und Friendly URLs (Standard).
 4. **Security → Browser Security → Embed in Frames:** *Allow from same origin* (die Übertragung lädt
