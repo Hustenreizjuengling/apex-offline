@@ -35,6 +35,56 @@ page 2 (
         }
     )
 
+    region fotos (
+        name: Fotos
+        type: dynamicContent
+        source {
+            plsqlFunctionBody:
+                ```plsql
+                return pck_oe_html.fotos(:P2_ID);
+                ```
+        }
+        layout {
+            sequence: 20
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+            cssClasses: offline-prefetch
+        }
+        serverSideCondition {
+            type: itemIsNotNull
+            item: P2_ID
+        }
+    )
+
+    button foto-hinzufuegen (
+        buttonName: FOTO
+        label: Foto hinzufügen
+        layout {
+            sequence: 10
+            region: @fotos
+            slot: create
+        }
+        appearance {
+            buttonTemplate: @/text
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: redirectThisApp
+            target: {
+                page: 4
+                items: {
+                    P4_ID:
+                    P4_AUFTRAG_ID: &P2_ID.
+                    P4_NR: &P2_NR.
+                }
+                clearCache: 4
+            }
+        }
+    )
+
     pageItem P2_ID (
         type: hidden
         layout {

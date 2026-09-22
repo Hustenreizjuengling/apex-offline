@@ -9,6 +9,7 @@
  *      Validierungen und Prozesse aus dem Builder. Kein eigenes Server-API, kein Feldvertrag.
  *   3. Bedienelemente per CSS-Klasse an normalen Items (Builder: Advanced > CSS Classes):
  *        offline-signature   Textarea wird zum Unterschriftenfeld (Wert: Bild als Data-URL)
+ *        offline-photo       Textarea wird zum Fotofeld: Kamera oder Galerie, verkleinert (Wert: Bild als Data-URL)
  *        offline-scan        Textfeld bekommt eine Kamera-Taste für Barcode und QR-Code
  *        offline-prefetch    (Region) Ziele ihrer Links und Buttons werden im Hintergrund offline verfügbar
  *                            gemacht - zusammen mit allen Seiten des Navigationsmenüs (Offline-Vorrat)
@@ -246,7 +247,9 @@
                 if (result.status === "ok") {
                     await deleteDraft(d.id);
                     sent++;
-                    fetch(liveUrl(d.url), { headers: { "x-offline-prefetch": "1" } }).catch(() => {}); // Cache auffrischen
+                    // gespeicherte Fassungen auffrischen: die Seite selbst und das Ziel nach dem Speichern
+                    [liveUrl(d.url), result.info].filter(u => u && new URL(u, document.baseURI).href.startsWith(location.origin + BASE))
+                        .forEach(u => fetch(new URL(u, document.baseURI).href, { headers: { "x-offline-prefetch": "1" } }).catch(() => {}));
                 } else {
                     await putDraft({ ...d, status: result.status, info: result.info });
                     if (result.status === "wartet") { break; } // Anmeldung oder Verbindung fehlt: später erneut
@@ -329,7 +332,7 @@
         } else {
             // Ergebnis abfangen: Erfolg = Weiterleitung, Fehler = Meldungen, Status 0/502-504 = Server weg.
             // APEX meldet auch Übertragungsfehler über showErrors - daher erst nach ajaxComplete entscheiden.
-            a.navigation.redirect = () => finish("ok");
+            a.navigation.redirect = url => finish("ok", url);
             a.message.showErrors = errors => {
                 const text = [].concat(errors).map(e => a.util.stripHTML(String(e.message || e))).join(" ");
                 setTimeout(() => finish("fehler", text));
@@ -467,16 +470,64 @@
         canvas.addEventListener("pointerup", () => {
             if (!last) { return; }
             last = null;
-            let url = canvas.toDataURL("image/png");
-            if (url.length > 30000) { url = canvas.toDataURL("image/jpeg", 0.6); } // APEX-Items fassen 32k Zeichen
-            save(url);
+            save(canvas.toDataURL("image/png"));
         });
         box.lastChild.addEventListener("click", () => { blank(); save(""); });
         $(input).on("change", () => { if (!own) { show(input.value); } });
         show(input.value);
     }
 
-    /* ---------- 3b. Barcode/QR: CSS-Klasse offline-scan an einem Textfeld ---------- */
+    /* ---------- 3b. Foto: CSS-Klasse offline-photo an einer Textarea ----------
+     * Kamera oder Galerie; das Bild wird im Browser auf höchstens 1600 Pixel verkleinert und als JPEG-Data-URL
+     * zum Wert des Items (Spalte CLOB). APEX überträgt auch Werte mit mehreren 100 000 Zeichen. */
+
+    const PHOTO_MAX = 1600, PHOTO_QUALITY = 0.8;
+
+    function photoField(node) {
+        const input = node.matches("textarea, input") ? node : node.querySelector("textarea, input");
+        if (!input || !input.id) { return; }
+        const box = document.createElement("div");
+        box.className = "offline-photo-box";
+        box.innerHTML = '<img alt="Foto" hidden>'
+            + '<label class="t-Button t-Button--iconLeft"><span class="t-Icon t-Icon--left fa fa-camera" aria-hidden="true"></span>'
+            + '<span class="t-Button-label">Foto aufnehmen oder auswählen</span><input type="file" accept="image/*" hidden></label>';
+        input.style.display = "none";
+        input.after(box);
+        const img = box.querySelector("img"), file = box.querySelector("input");
+        let own = false;
+        const show = value => {
+            img.hidden = !/^data:image\//.test(value || "");
+            if (!img.hidden) { img.src = value; }
+        };
+        file.addEventListener("change", async () => {   // das Datei-Feld hat keinen Namen: APEX überträgt es nie selbst
+            const chosen = file.files[0];
+            file.value = "";
+            if (!chosen) { return; }
+            try {
+                const url = await shrink(chosen);
+                own = true; apex.item(input.id).setValue(url); own = false;
+                show(url);
+            } catch (e) {
+                apex.message.alert("Das Bild konnte nicht gelesen werden.");
+            }
+        });
+        $(input).on("change", () => { if (!own) { show(input.value); } });
+        show(input.value);
+    }
+
+    async function shrink(blob) {                 // längste Seite höchstens PHOTO_MAX Pixel, JPEG
+        const source = new Image();
+        source.src = URL.createObjectURL(blob);
+        try { await source.decode(); } finally { URL.revokeObjectURL(source.src); }
+        const scale = Math.min(1, PHOTO_MAX / Math.max(source.naturalWidth, source.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(source.naturalWidth * scale);
+        canvas.height = Math.round(source.naturalHeight * scale);
+        canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL("image/jpeg", PHOTO_QUALITY);
+    }
+
+    /* ---------- 3c. Barcode/QR: CSS-Klasse offline-scan an einem Textfeld ---------- */
 
     function scanButton(node) {
         const input = node.matches("input") ? node : node.querySelector("input");
@@ -528,7 +579,7 @@
         }
     }
 
-    /* ---------- 3c. Offline-Vorrat: alle offline benötigten Seiten im Hintergrund laden ----------
+    /* ---------- 3d. Offline-Vorrat: alle offline benötigten Seiten im Hintergrund laden ----------
      * Einmal je Sitzung: alle Seiten des Navigationsmenüs und von dort aus (auch mehrstufig) alle Ziele von
      * Links und Buttons in Regionen mit der CSS-Klasse offline-prefetch - z. B. jeder Auftrag der Liste und
      * die Seite hinter "Neuer Auftrag". Der Service Worker speichert jede geladene Seite. */
@@ -592,6 +643,7 @@
         if (IS_COPY) { apex.message.hidePageSuccess(); }   // Erfolgsmeldung der gespeicherten Fassung ist veraltet
         $(document).on("apexbeforepagesubmit", onBeforeSubmit);   // nach den Dynamic Actions binden, sonst setzen sie das Abbrechen zurück
         document.querySelectorAll(".offline-signature").forEach(signaturePad);
+        document.querySelectorAll(".offline-photo").forEach(photoField);
         document.querySelectorAll(".offline-scan").forEach(scanButton);
         const done = sessionStorage.getItem("offline-done");
         if (done) { sessionStorage.removeItem("offline-done"); await deleteDraft(done); }

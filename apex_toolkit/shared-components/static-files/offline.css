@@ -31,6 +31,10 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 }
 .offline-signature-pad button { margin-top: 4px; }
 
+/* Foto: Vorschau über der Taste */
+.offline-photo-box img { display: block; max-width: 100%; max-height: 240px; margin-bottom: 8px; border-radius: 4px; }
+.offline-photo-box label { cursor: pointer; }
+
 /* Barcode/QR-Scanner: Taste rechts im Feld wie beim Datumsfeld (UT sortiert das Eingabefeld mit order: 3) */
 .t-Form-itemWrapper > .offline-scan-button { order: 4; margin: 0; min-width: 44px; border-radius: 0 4px 4px 0; box-shadow: none; }
 .offline-scan-overlay {

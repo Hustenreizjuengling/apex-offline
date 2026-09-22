@@ -64,6 +64,7 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         return {
             status: text("P3_STATUS"), befund: text("P3_BEFUND"), messwert: text("P3_MESSWERT"), asset: text("P3_ASSET_CODE"),
             signer: text("P3_UNTERZEICHNER"), erledigt: text("P3_ERLEDIGT_AM"),
+            fotos: [...document.querySelectorAll("figure")].map(f => (f.querySelector("img") ? "[Bild] " : "") + f.innerText.trim()),
             signature: (document.querySelector("#P3_UNTERSCHRIFT_DISPLAY img") || {}).src || ""
         };
     });
@@ -91,11 +92,12 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
             return name ? (await (await caches.open(name)).keys()).map(r => r.url) : [];
         });
         const complete = list => list.some(u => /\/auftraege$/.test(u)) && list.some(u => /\/auftrag\?p2_id=$/.test(u))
-            && list.filter(u => /\/auftrag\?p2_id=\d/.test(u)).length >= orders && list.filter(u => /\/protokoll\?p3_id=\d/.test(u)).length >= orders;
+            && list.filter(u => /\/auftrag\?p2_id=\d/.test(u)).length >= orders && list.filter(u => /\/protokoll\?p3_id=\d/.test(u)).length >= orders
+            && list.filter(u => /\/foto\?/.test(u)).length >= orders;
         await waitFor(async () => complete(await cachedPages()) && !/lädt/.test(await pill(page)), 60000, "Offline-Vorrat").catch(() => false);
         const cached = await cachedPages();
         check(await page.evaluate(() => !!navigator.serviceWorker.controller), "Seite wird vom Service Worker kontrolliert");
-        check(complete(cached), `Vorrat ohne einen Klick: Liste, Anlegeseite, ${orders} Aufträge und Protokolle (`
+        check(complete(cached), `Vorrat ohne einen Klick: Liste, Anlegeseite, je ${orders} Aufträge, Protokolle und Foto-Seiten (`
             + cached.filter(u => u.startsWith(URL_)).length + " Seiten)");
 
         console.log("2. Offline: Liste und nie geöffneter Auftrag kommen aus dem Cache");
@@ -232,6 +234,32 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         await waitFor(async () => (await pill(page)).trim() === "Offline", 10000, "keine Entwürfe");
         check(true, "Entwurf nach Rückfrage verworfen");
         await field.setOffline(false);
+
+        console.log("11. Foto offline anhängen, danach übertragen");
+        await field.setOffline(true);
+        await page.reload();
+        await openOrder(page, "A-1003");
+        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);
+        await page.setInputFiles(".offline-photo-box input[type=file]", require("path").join(__dirname, "fixtures", "foto.jpg"));
+        await waitFor(async () => (await page.inputValue("#P4_FOTO")).startsWith("data:image/jpeg"), 10000, "Foto verkleinert");
+        const photo = await page.evaluate(async () => {
+            const img = document.querySelector(".offline-photo-box img");
+            await img.decode();
+            return { w: img.naturalWidth, h: img.naturalHeight, kb: Math.round(apex.item("P4_FOTO").getValue().length / 1024) };
+        });
+        check(photo.w === 1600 && photo.h === 1200, `Foto im Browser verkleinert: 2400×1800 → ${photo.w}×${photo.h} (${photo.kb} KB)`);
+        await page.fill("#P4_BEMERKUNG", "Typenschild " + RUN);
+        await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
+        await waitFor(async () => /1 offen/.test(await pill(page)), 10000, "1 offen");
+        check(true, "Foto offline gespeichert, Anzeige: " + await pill(page));
+        await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        await waitFor(async () => !/offen|lädt/.test(await pill(page).catch(() => "offen")), 60000, "Übertragung Foto");
+        const withPhoto = await serverValues(desk, "A-1003");
+        check(withPhoto.fotos.includes("[Bild] Typenschild " + RUN), "Foto mit Bemerkung im Protokoll: " + withPhoto.fotos.join(" | "));
+        await gotoList(page);
+        await openOrder(page, "A-1003");
+        check(await page.locator("figure img").count() >= 1, "Foto auch am Auftrag sichtbar");
 
         check(errors.length === 0, "keine JavaScript-Fehler" + (errors.length ? ": " + errors.join(" | ") : ""));
     } catch (e) {

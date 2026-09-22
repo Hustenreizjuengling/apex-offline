@@ -1,6 +1,8 @@
-"""Erzeugt tests/fixtures/barcode.mjpeg: EAN-13 als Bild für die simulierte Kamera von Chromium.
+"""Erzeugt die Testbilder (braucht Pillow):
+    barcode.mjpeg  EAN-13 als Bild für die simulierte Kamera von Chromium
+    foto.jpg       Foto mit 2400 x 1800 Pixeln (größer als die 1600 Pixel, auf die offline.js verkleinert)
 
-    python tests/fixtures/make-barcode.py      (braucht Pillow)
+    python tests/fixtures/make-fixtures.py
 """
 from pathlib import Path
 from PIL import Image, ImageDraw
@@ -32,3 +34,16 @@ for i, b in enumerate(bits):
 out = Path(__file__).with_name("barcode.mjpeg")
 img.save(out, "JPEG", quality=95)
 print(out, CODE)
+
+foto = Image.new("RGB", (2400, 1800))
+pixels = foto.load()
+for x in range(0, 2400, 4):
+    for y in range(0, 1800, 4):
+        color = (x * 255 // 2400, y * 255 // 1800, 128)
+        for dx in range(4):
+            for dy in range(4):
+                pixels[x + dx, y + dy] = color
+ImageDraw.Draw(foto).rectangle([900, 700, 1500, 1100], outline="white", width=20)
+out = Path(__file__).with_name("foto.jpg")
+foto.save(out, "JPEG", quality=90)
+print(out)

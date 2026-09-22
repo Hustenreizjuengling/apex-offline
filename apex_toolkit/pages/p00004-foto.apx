@@ -1,0 +1,227 @@
+page 4 (
+    name: Foto
+    alias: FOTO
+    title: Foto zu &P4_NR.
+    appearance {
+        pageTemplate: @/standard
+        templateOptions: #DEFAULT#
+        cssClasses: offline-form
+    }
+    navigation {
+        cursorFocus: doNotFocusCursor
+    }
+    security {
+        pageAccessProtection: argumentsMustHaveChecksum
+        formAutoComplete: false
+    }
+
+    region foto (
+        name: Foto zu Auftrag &P4_NR.
+        type: form
+        source {
+            location: localDatabase
+            tableName: OE_AUFTRAG_FOTO
+        }
+        layout {
+            sequence: 10
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        edit {
+            enabled: true
+        }
+    )
+
+    pageItem P4_ID (
+        type: hidden
+        layout {
+            sequence: 10
+            region: @foto
+            slot: regionBody
+        }
+        source {
+            formRegion: @foto
+            column: ID
+            dataType: number
+            primaryKey: true
+        }
+        security {
+            sessionStateProtection: checksumRequiredUserLevel
+        }
+    )
+
+    pageItem P4_AUFTRAG_ID (
+        type: hidden
+        layout {
+            sequence: 20
+            region: @foto
+            slot: regionBody
+        }
+        source {
+            formRegion: @foto
+            column: AUFTRAG_ID
+            dataType: number
+        }
+        security {
+            sessionStateProtection: checksumRequiredUserLevel
+        }
+    )
+
+    pageItem P4_NR (
+        type: hidden
+        layout {
+            sequence: 30
+            region: @foto
+            slot: regionBody
+        }
+    )
+
+    pageItem P4_FOTO (
+        type: textarea
+        label {
+            label: Foto
+        }
+        layout {
+            sequence: 40
+            region: @foto
+            slot: regionBody
+        }
+        appearance {
+            template: @/required-above
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            valueRequired: true
+        }
+        advanced {
+            cssClasses: offline-photo
+        }
+        source {
+            formRegion: @foto
+            column: FOTO
+            dataType: clob
+        }
+        sessionState {
+            dataType: clob
+        }
+    )
+
+    pageItem P4_BEMERKUNG (
+        type: textField
+        label {
+            label: Bemerkung
+        }
+        layout {
+            sequence: 50
+            region: @foto
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            maxLength: 400
+        }
+        source {
+            formRegion: @foto
+            column: BEMERKUNG
+            dataType: varchar2
+        }
+    )
+
+    button abbrechen (
+        buttonName: CANCEL
+        label: Abbrechen
+        layout {
+            sequence: 10
+            region: @foto
+            slot: close
+        }
+        appearance {
+            buttonTemplate: @/text
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: redirectThisApp
+            target: {
+                page: 2
+                items: {
+                    P2_ID: &P4_AUFTRAG_ID.
+                }
+                clearCache: 2
+            }
+        }
+    )
+
+    button anlegen (
+        buttonName: CREATE
+        label: Speichern
+        layout {
+            sequence: 20
+            region: @foto
+            slot: next
+        }
+        appearance {
+            buttonTemplate: @/text
+            hot: true
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: submitPage
+            databaseAction: insert
+        }
+        serverSideCondition {
+            type: itemIsNull
+            item: P4_ID
+        }
+    )
+
+    process formular-laden (
+        name: Formular laden
+        type: formInitialization
+        formRegion: @foto
+        execution {
+            sequence: 10
+            point: beforeHeader
+        }
+    )
+
+    process formular-speichern (
+        name: Formular speichern
+        type: formAutoRowProcessing
+        formRegion: @foto
+        execution {
+            sequence: 10
+        }
+        successMessage {
+            successMessage: Foto gespeichert.
+        }
+    )
+
+    branch zum-auftrag (
+        name: Zum Auftrag
+        execution {
+            sequence: 10
+            point: afterProcessing
+        }
+        behavior {
+            type: pageOrUrl
+            target: {
+                page: 2
+                items: {
+                    P2_ID: &P4_AUFTRAG_ID.
+                }
+                clearCache: 2
+            }
+        }
+        serverSideCondition {
+            type: requestIsContainedInValue
+            value: CREATE
+        }
+    )
+
+)

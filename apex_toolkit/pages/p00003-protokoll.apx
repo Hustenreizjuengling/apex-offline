@@ -265,13 +265,8 @@ page 3 (
             basedOn: plsql
             plsqlCode:
                 ```plsql
-                -- Unterschrift als Bild ausgeben (Data-URL, stückweise, jedes Zeichen als Attribut maskiert)
-                for r in (select unterschrift from oe_auftrag where id = :P3_ID and unterschrift like 'data:image/%') loop
-                    htp.prn('<img alt="Unterschrift des Kunden" style="max-width:100%;height:auto" src="');
-                    for i in 0 .. trunc((dbms_lob.getlength(r.unterschrift) - 1) / 8000) loop
-                        htp.prn(apex_escape.html_attribute(dbms_lob.substr(r.unterschrift, 8000, i * 8000 + 1)));
-                    end loop;
-                    htp.prn('">');
+                for r in (select unterschrift from oe_auftrag where id = :P3_ID) loop
+                    pck_oe_html.drucken(pck_oe_html.bild(r.unterschrift, 'Unterschrift des Kunden', 'max-width:100%;height:auto'));
                 end loop;
                 ```
         }
@@ -295,6 +290,25 @@ page 3 (
             formRegion: @protokoll
             column: UNTERZEICHNER
             dataType: varchar2
+        }
+    )
+
+    region fotos (
+        name: Fotos
+        type: dynamicContent
+        source {
+            plsqlFunctionBody:
+                ```plsql
+                return pck_oe_html.fotos(:P3_ID);
+                ```
+        }
+        layout {
+            sequence: 20
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
         }
     )
 

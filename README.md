@@ -69,6 +69,7 @@ Processing*, Verzweigungen. Beispiel: `apex_toolkit/pages/p00002-auftrag.apx`.
 | Klasse | Wo | Ergebnis |
 |---|---|---|
 | `offline-signature` | Textarea-Item → Advanced → CSS Classes | Unterschriftenfeld; Wert ist ein Bild als Data-URL (Spalte CLOB, Session State Data Type CLOB, Label-Template „Optional – Above") |
+| `offline-photo` | Textarea-Item → Advanced → CSS Classes | Fotofeld: Kamera oder Galerie, Vorschau; das Bild wird im Browser auf höchstens 1600 Pixel verkleinert und ist als JPEG-Data-URL der Wert des Items (Spalte CLOB, Session State Data Type CLOB) |
 | `offline-scan` | Textfeld-Item → Advanced → CSS Classes | Kamera-Taste für Barcode und QR-Code; Hand- und Bluetooth-Scanner tippen ohnehin ins Feld |
 | `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | die Ziele ihrer Links und Buttons gehören zum Offline-Vorrat (siehe unten) |
 
@@ -79,9 +80,10 @@ Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund – die Anzeig
 1. alle Seiten des **Navigationsmenüs**,
 2. von dort aus, auch mehrstufig, die Ziele aller **Links und Buttons in Regionen mit `offline-prefetch`**.
 
-In der Beispiel-App sind das die Auftragsliste (Menü), jeder Auftrag und jedes Protokoll (Links im Bericht)
-und die Anlegeseite (Button „Neuer Auftrag" in derselben Region) – zwölf Seiten, ohne einen Klick. Die
-Liste der Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
+In der Beispiel-App sind das die Auftragsliste (Menü), jeder Auftrag und jedes Protokoll (Links im Bericht),
+die Anlegeseite (Button „Neuer Auftrag" in derselben Region) und je Auftrag die Seite „Foto hinzufügen"
+(Button in der Region „Fotos" des Auftrags) – bei fünf Aufträgen 17 Seiten, ohne einen Klick. Die Liste der
+Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
 
 Damit eine Seite zum Vorrat gehört, muss sie also im Menü stehen oder von einer `offline-prefetch`-Region
 aus verlinkt sein. Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
@@ -103,12 +105,25 @@ ausgefüllter Wert, z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehör
 | konflikt | dasselbe Feld wurde inzwischen auf dem Server geändert – öffnen, entscheiden, speichern |
 | unklar | Neuanlage, bei der die Verbindung während des Speicherns abriss – erst prüfen, ob der Datensatz schon existiert, dann öffnen oder verwerfen |
 
+## Fotos am Auftrag
+
+Beispiel für Anhänge, die offline entstehen: beliebig viele Fotos je Auftrag in der Tabelle
+`OE_AUFTRAG_FOTO`. Die Seite 4 „Foto" ist ein normales natives Formular auf dieser Tabelle mit einem
+Textarea-Item `P4_FOTO` (CSS-Klasse `offline-photo`) und einer Bemerkung. Der Auftrag (Seite 2) zeigt die
+Fotos in der Region „Fotos", deren Button „Foto hinzufügen" die Seite 4 mit dem Auftrag öffnet.
+
+Offline ist ein Foto ein Entwurf wie jede andere Neuanlage und wird später durch Seite 4 abgesendet. APEX
+überträgt dabei auch Item-Werte mit mehreren 100 000 Zeichen (geprüft mit 260 000). Ein Handyfoto wird
+durch das Verkleinern auf 1600 Pixel zu etwa 150–400 KB. Für eine eigene Fotoseite gelten dieselben Regeln
+wie für jede Erfassungsseite: `offline-form`, Primärschlüssel und Auftragsbezug mit *User Level*, Link mit
+leerem Primärschlüssel. Bilder als Data-URL zeigt `pck_oe_html` an (`sql/pck_oe_html.sql`).
+
 ## Protokoll
 
-Seite 3 zeigt einen Auftrag mit Unterschrift druckfertig an; *Drucken / PDF* nutzt den Druckdialog des
-Browsers. Die Unterschrift wird über ein Display-Only-Item mit PL/SQL ausgegeben, weil das Item
-*Display Image* keine Data-URLs über 4000 Zeichen darstellen kann. Offline erfasste Daten erscheinen im
-Protokoll nach der Übertragung.
+Seite 3 zeigt einen Auftrag mit Unterschrift und Fotos druckfertig an; *Drucken / PDF* nutzt den
+Druckdialog des Browsers. Unterschrift und Fotos gibt `pck_oe_html` aus, weil das Item *Display Image*
+keine Data-URLs über 4000 Zeichen darstellen kann. Offline erfasste Daten erscheinen im Protokoll nach der
+Übertragung.
 
 ## Grenzen
 
@@ -128,7 +143,9 @@ Protokoll nach der Übertragung.
 
 ```text
 sql -name <verbindung>
-SQL> @sql/install.sql                     -- Tabelle OE_AUFTRAG mit fünf Aufträgen
+SQL> cd sql
+SQL> @install.sql                         -- Tabellen OE_AUFTRAG (fünf Aufträge), OE_AUFTRAG_FOTO, Paket PCK_OE_HTML
+SQL> cd ..
 SQL> apex import -input apex_toolkit -workspace <workspace>   -- App 1700, Alias ERFASSUNG
 ```
 

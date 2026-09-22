@@ -1,4 +1,4 @@
--- Demo-Daten für die Offline-Erfassung (als Parsing Schema der App ausführen, z. B. HR)
+-- Demo-Daten für die Offline-Erfassung (als Parsing Schema der App ausführen, z. B. HR; aus dem Ordner sql/)
 -- Die Offline-Schicht selbst braucht KEINE Datenbankobjekte. Diese Tabelle ist nur das Beispiel,
 -- auf dem die native Formularseite arbeitet.
 set define off
@@ -40,6 +40,9 @@ begin
     :new.updated_by := l_user;
 end;
 /
+
+@@oe_auftrag_foto.sql
+@@pck_oe_html.sql
 
 insert into oe_auftrag (nr, titel, kunde, ort) values ('A-1001', 'Wartung Heizungsanlage', 'Stadtwerke Nord', 'Hauptstraße 12, Kiel');
 insert into oe_auftrag (nr, titel, kunde, ort) values ('A-1002', 'Zählerwechsel', 'Wohnbau Süd', 'Am Markt 3, Ulm');
