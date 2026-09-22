@@ -61,6 +61,10 @@ page 3 (
             region: @protokoll
             slot: regionBody
         }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
+        }
         source {
             formRegion: @protokoll
             column: NR
@@ -77,6 +81,10 @@ page 3 (
             sequence: 30
             region: @protokoll
             slot: regionBody
+        }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
         }
         source {
             formRegion: @protokoll
@@ -95,6 +103,10 @@ page 3 (
             region: @protokoll
             slot: regionBody
         }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
+        }
         source {
             formRegion: @protokoll
             column: KUNDE
@@ -112,6 +124,10 @@ page 3 (
             region: @protokoll
             slot: regionBody
         }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
+        }
         source {
             formRegion: @protokoll
             column: ORT
@@ -128,6 +144,10 @@ page 3 (
             sequence: 60
             region: @protokoll
             slot: regionBody
+        }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
         }
         settings {
             basedOn: lov
@@ -153,6 +173,10 @@ page 3 (
             region: @protokoll
             slot: regionBody
         }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
+        }
         source {
             formRegion: @protokoll
             column: ERLEDIGT_AM
@@ -169,6 +193,10 @@ page 3 (
             sequence: 80
             region: @protokoll
             slot: regionBody
+        }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
         }
         source {
             formRegion: @protokoll
@@ -187,6 +215,10 @@ page 3 (
             region: @protokoll
             slot: regionBody
         }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
+        }
         source {
             formRegion: @protokoll
             column: ASSET_CODE
@@ -203,6 +235,10 @@ page 3 (
             sequence: 100
             region: @protokoll
             slot: regionBody
+        }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
         }
         source {
             formRegion: @protokoll
@@ -221,13 +257,17 @@ page 3 (
             region: @protokoll
             slot: regionBody
         }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
+        }
         settings {
             basedOn: plsql
             plsqlCode:
                 ```plsql
                 -- Unterschrift als Bild ausgeben (Data-URL, stückweise, jedes Zeichen als Attribut maskiert)
                 for r in (select unterschrift from oe_auftrag where id = :P3_ID and unterschrift like 'data:image/%') loop
-                    htp.prn('<img class="protokoll-unterschrift" alt="Unterschrift des Kunden" src="');
+                    htp.prn('<img alt="Unterschrift des Kunden" style="max-width:100%;height:auto" src="');
                     for i in 0 .. trunc((dbms_lob.getlength(r.unterschrift) - 1) / 8000) loop
                         htp.prn(apex_escape.html_attribute(dbms_lob.substr(r.unterschrift, 8000, i * 8000 + 1)));
                     end loop;
@@ -246,6 +286,10 @@ page 3 (
             sequence: 120
             region: @protokoll
             slot: regionBody
+        }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
         }
         source {
             formRegion: @protokoll

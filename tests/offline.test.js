@@ -15,6 +15,7 @@ const USER = process.env.OE_USER, PASSWORD = process.env.OE_PASSWORD;
 if (!URL_ || !USER || !PASSWORD) { console.error("OE_URL, OE_USER und OE_PASSWORD setzen."); process.exit(2); }
 
 const RUN = "T" + Date.now().toString(36);                 // Kennung dieses Laufs in den Testdaten
+const OFFICE = "Büro <b>" + RUN + "</b>";                     // Büro-Wert mit HTML: muss überall als Text erscheinen
 let failed = 0;
 function check(ok, text) { console.log((ok ? "  [OK]   " : "  [FEHLER] ") + text); if (!ok) { failed++; } }
 
@@ -69,8 +70,10 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
 }
 
 (async () => {
-    const browser = await chromium.launch({ headless: true, args: ["--ignore-certificate-errors"] });
-    const field = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });   // Techniker
+    const camera = require("path").join(__dirname, "fixtures", "barcode.mjpeg");   // simulierte Kamera zeigt einen EAN-13
+    const browser = await chromium.launch({ headless: true, args: ["--ignore-certificate-errors",
+        "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--use-file-for-fake-video-capture=" + camera] });
+    const field = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE", permissions: ["camera"] });   // Techniker
     const office = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });  // Büro, immer online
     const page = await field.newPage();
     const errors = [];
@@ -142,7 +145,7 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         const desk = await office.newPage();
         await login(desk);
         await openOrder(desk, "A-1002");
-        await desk.fill("#P2_BEFUND", "Büro " + RUN);
+        await desk.fill("#P2_BEFUND", OFFICE);
         await Promise.all([desk.waitForURL(/auftraege/), desk.getByRole("button", { name: "Speichern" }).click()]);
 
         if (process.env.OE_DEBUG) { await page.evaluate(() => { window.oeDebug = true; }); console.log("           Entwürfe: " + await drafts(page)); }
@@ -159,7 +162,7 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         await gotoList(desk);
         check(await desk.locator("td", { hasText: "Offline angelegt " + RUN }).count() === 1, "offline angelegter Auftrag genau einmal vorhanden");
         const b = await serverValues(desk, "A-1002");
-        check(b.befund === "Büro " + RUN, "Konflikt: Büro-Wert nicht überschrieben");
+        check(b.befund === OFFICE, "Konflikt: Büro-Wert nicht überschrieben");
 
         console.log("7. Konflikt lösen: Entwurf öffnen, Werte prüfen, speichern");
         await page.locator(".offline-status").click();
@@ -167,7 +170,8 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         check(/konflikt/.test(state), "Liste zeigt Konflikt: " + state.replace(/\s+/g, " "));
         await Promise.all([page.waitForURL(/auftrag/), page.locator(".offline-panel [data-act=open]").click()]);
         await page.waitForSelector("#P2_BEFUND_error");
-        check((await page.locator("#P2_BEFUND_error").innerText()).includes("Auf dem Server inzwischen: Büro " + RUN), "Konflikt am Feld mit Server-Wert angezeigt");
+        check((await page.locator("#P2_BEFUND_error").innerText()).includes("Auf dem Server inzwischen: " + OFFICE)
+            && await page.locator("#P2_BEFUND_error b").count() === 0, "Konflikt am Feld mit Server-Wert angezeigt (HTML als Text)");
         check(await page.inputValue("#P2_BEFUND") === "Techniker " + RUN, "Offline-Wert eingesetzt");
         await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Speichern" }).click()]);
         await waitFor(async () => /Online$/.test((await pill(page)).trim()), 15000, "keine offenen Entwürfe");
@@ -188,11 +192,7 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         await field.clearCookies();                                 // Sitzung weg
         await field.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
-        await waitFor(async () => /Anmeldung/.test(await page.evaluate(async () => {
-            const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
-            const all = await new Promise(r => { const q = db.transaction("drafts").objectStore("drafts").getAll(); q.onsuccess = () => r(q.result); });
-            return all.map(d => d.info).join();
-        })), 30000, "Hinweis Anmeldung");
+        await waitFor(async () => /Anmeldung erforderlich/.test(await drafts(page)), 30000, "Hinweis Anmeldung");
         check(true, "Übertragung wartet auf Anmeldung");
         await login(page);
         await waitFor(async () => (await pill(page)).trim() === "Online", 60000, "Übertragung nach Anmeldung");
@@ -200,6 +200,42 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         check(c.befund === "Nach Anmeldung " + RUN, "Änderung nach neuer Anmeldung übertragen (Prüfsumme je Benutzer)");
         await gotoList(desk);
         check(await desk.locator("td", { hasText: "Nach Anmeldung angelegt " + RUN }).count() === 1, "Neuanlage nach neuer Anmeldung genau einmal übertragen");
+
+        console.log("9. Offline scannen: nur die Liste online geöffnet, simulierte Kamera, Decoder aus den App-Dateien");
+        const scanCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE", permissions: ["camera"] });
+        const scanner = await scanCtx.newPage();
+        scanner.on("pageerror", e => errors.push(e.message));
+        await login(scanner);
+        await scanner.reload();                                     // vom Service Worker kontrolliert: Vorab-Laden läuft
+        await scanner.waitForSelector(".offline-status");
+        await waitFor(() => scanner.evaluate(async () => {
+            const hit = await caches.match(document.querySelector("script[src*='offline.js']").src.replace(/offline\.js.*$/, "vendor/barcode-detector/zxing_reader.wasm"));
+            const pages = await (await caches.open((await caches.keys()).find(n => n.startsWith("offline-pages:")))).keys();
+            return !!hit && pages.filter(r => /auftrag\?p2_id=\d/.test(r.url)).length >= 5;
+        }), 30000, "Vorab-Laden mit Decoder");
+        await scanCtx.setOffline(true);
+        await scanner.reload();
+        await openOrder(scanner, "A-1004");                         // nie online geöffnet
+        const foreign = [];
+        scanCtx.on("request", r => { if (!r.url().startsWith(new URL(URL_).origin)) { foreign.push(r.url()); } });
+        await scanner.click(".offline-scan-button");
+        await waitFor(async () => await scanner.inputValue("#P2_ASSET_CODE") === "4006381333931", 30000, "Scan");
+        check(true, "Barcode offline gelesen: " + await scanner.inputValue("#P2_ASSET_CODE"));
+        check(foreign.length === 0, "keine Anfrage an fremde Server" + (foreign.length ? ": " + foreign.join(", ") : ""));
+
+        console.log("10. Entwurf verwerfen");
+        await field.setOffline(true);
+        await page.reload();
+        await openOrder(page, "A-1005");
+        await page.fill("#P2_BEFUND", "Wird verworfen " + RUN);
+        await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Speichern" }).click()]);
+        await waitFor(async () => /1 offen/.test(await pill(page)), 10000, "1 offen");
+        await page.locator(".offline-status").click();
+        await page.locator(".offline-panel [data-act=drop]").click();
+        await page.locator(".ui-dialog").getByRole("button", { name: "OK" }).click();
+        await waitFor(async () => (await pill(page)).trim() === "Offline", 10000, "keine Entwürfe");
+        check(true, "Entwurf nach Rückfrage verworfen");
+        await field.setOffline(false);
 
         check(errors.length === 0, "keine JavaScript-Fehler" + (errors.length ? ": " + errors.join(" | ") : ""));
     } catch (e) {

@@ -10,7 +10,7 @@
  *   3. Bedienelemente per CSS-Klasse an normalen Items (Builder: Advanced > CSS Classes):
  *        offline-signature   Textarea wird zum Unterschriftenfeld (Wert: Bild als Data-URL)
  *        offline-scan        Textfeld bekommt eine Kamera-Taste für Barcode und QR-Code
- *        offline-prefetch    (Region) verlinkte Seiten werden vorab offline verfügbar gemacht
+ *        offline-prefetch    (Region) verlinkte Seiten (Links ohne Request) werden vorab offline verfügbar
  * Die Seiten selbst speichert offline-sw.js (Service Worker) bei jedem Online-Aufruf.
  */
 (function (apex, $) {
@@ -43,6 +43,7 @@
     const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
     const say = text => apex.message.showPageSuccess(text);
     const isDelete = request => /DELETE/i.test(request || "");
+    const saves = request => !!request && !apex.item(request).node;         // Enter- oder Auswahllisten-Submit speichert nicht
     const isForm = () => document.body.classList.contains("offline-form");   // Page > Appearance > CSS Classes
 
     function pageKey(href) {                      // eine Seite = Pfad + fachliche Parameter
@@ -123,12 +124,14 @@
 
     async function saveOffline(request, uncertain) {
         const items = draft ? { ...draft.items } : {};
-        for (const [name, val] of Object.entries(readItems())) {
-            const old = name in items ? items[name].old : snapshot[name];
+        const now = readItems();
+        for (const [name, val] of Object.entries(now)) {
+            const old = snapshot[name];               // Stand, den der Anwender beim Öffnen gesehen hat
             if (same(val, old)) { delete items[name]; } else { items[name] = { old, val }; }
         }
         if (!Object.keys(items).length && !isDelete(request)) { say("Keine Änderungen."); return; }
         const create = draft ? draft.create : /^CREATE/i.test(request);
+        const first = Object.values(now).find(v => typeof v === "string" && v && !v.startsWith("data:"));
         capturing = true;
         try {
             await putDraft({
@@ -137,14 +140,14 @@
                 url: location.href.split("#")[0],
                 page: String(env.APP_PAGE_ID),
                 user: env.APP_USER,
-                title: document.title,
+                title: document.title + (first ? ": " + first.slice(0, 40) : ""),   // z. B. "Auftrag: A-1005"
                 request,
                 create,
                 items,
                 ts: Date.now(),
                 // Verbindung brach beim Speichern ab: vielleicht ist der Datensatz schon angelegt
-                status: uncertain && create ? "unklar" : "wartet",
-                info: uncertain && create ? "Bitte prüfen, ob er schon angelegt ist" : ""
+                status: (uncertain && create) || (draft && draft.status === "unklar") ? "unklar" : "wartet",
+                info: ""
             });
         } catch (e) {
             capturing = false;
@@ -175,24 +178,26 @@
         if (reload) { reload.value = "S"; }       // Ergebnis per Ajax, damit ein Abbruch erkannt wird
         if (online && !IS_COPY) { return; }       // normaler Weg: APEX sendet selbst
         apex.event.gCancelFlag = true;            // Absenden abbrechen (einziger APEX-Mechanismus)
-        if (!lastRequest || apex.item(lastRequest).node) { say("Ohne Verbindung nicht möglich."); return; }
+        if (!saves(lastRequest)) { say("Ohne Verbindung nicht möglich."); return; }
         if (isDelete(lastRequest) || apex.page.validate()) { saveOffline(lastRequest, false); }
     }
 
     // Reißt die Verbindung beim Absenden ab, zeigt APEX nichts an (Status 0, ohne Zeitlimit sogar erst
     // nach Minuten). Dann als Entwurf sichern; ist der Server erreichbar, einfach erneut speichern.
-    apex.jQuery.ajaxPrefilter(o => { if (/wwv_flow\.accept/.test(o.url || "") && !o.timeout) { o.timeout = 30000; } });
+    // 502-504: Proxy oder ORDS erreichbar, Datenbank nicht - ebenfalls als Entwurf sichern.
+    const unreachable = xhr => xhr.status === 0 || xhr.status >= 502;
+    apex.jQuery.ajaxPrefilter(o => { if (isForm() && /wwv_flow\.accept/.test(o.url || "") && !o.timeout) { o.timeout = 30000; } });
 
-    async function onSubmitLost() {
-        if (await check()) { say("Die Übertragung wurde unterbrochen. Bitte prüfen und erneut speichern."); return; }
+    async function onSubmitLost(status) {
+        if (!status && await check()) { say("Die Übertragung wurde unterbrochen. Bitte prüfen und erneut speichern."); return; }
         if (isDelete(lastRequest) || apex.page.validate()) { saveOffline(lastRequest, true); }
     }
 
     $(document).on("ajaxComplete", (event, xhr, settings) => {
         if (!/wwv_flow\.accept/.test(settings.url || "") || !isForm()) { return; }
-        if (xhr.status === 0) { onSubmitLost(); return; }
+        if (unreachable(xhr)) { onSubmitLost(xhr.status); return; }
         // Online erfolgreich gespeichert: angewendeten Entwurf beim nächsten Seitenaufbau löschen
-        if (draft && xhr.responseJSON && xhr.responseJSON.redirectURL) { sessionStorage.setItem("offline-done", draft.id); }
+        if (draft && saves(lastRequest) && xhr.responseJSON && xhr.responseJSON.redirectURL) { sessionStorage.setItem("offline-done", draft.id); }
     });
 
     /* ---------- Entwurf beim Öffnen einer Seite wieder einsetzen ---------- */
@@ -210,11 +215,11 @@
             return;
         }
         say(IS_COPY ? "Offline-Entwurf geladen." : "Offline erfasste Werte eingesetzt - bitte prüfen und speichern.");
-        const problems = [
+        const problems = [                        // ohne "unsafe: false" maskiert APEX den Text (Server-Wert!)
             ...result.conflicts.map(([name, current]) => ({ type: "error", location: ["inline", "page"], pageItem: name,
-                message: "Auf dem Server inzwischen: " + (current || "(leer)"), unsafe: false })),
+                message: "Auf dem Server inzwischen: " + (current || "(leer)") })),
             ...result.lost.map(name => ({ type: "error", location: "page",
-                message: "Offline-Wert nicht übernommen: " + labels([name]), unsafe: false }))
+                message: "Offline-Wert nicht übernommen: " + labels([name]) }))
         ];
         if (problems.length) { apex.message.showErrors(problems); }
     }
@@ -226,14 +231,14 @@
         syncing = true;
         let sent = 0;
         const run = async () => {
-            for (const d of await allDrafts()) {
-                if (d.status === "sendet") {      // beim letzten Mal abgebrochen: Ausgang unbekannt
+            for (const { id } of await allDrafts()) {
+                const d = await store("readonly", s => s.get(id));   // frisch lesen: inzwischen verworfen?
+                if (!d) { continue; }
+                if (d.status === "sendet") {      // beim letzten Mal mitten im Absenden abgebrochen: Ausgang unbekannt
                     d.status = d.create ? "unklar" : "wartet";
-                    d.info = d.create ? "Bitte prüfen, ob er schon angelegt ist" : "";
                     await putDraft(d);
                 }
                 if (d.status !== "wartet" || (draft && d.id === draft.id)) { continue; }
-                await putDraft({ ...d, status: "sendet" });
                 const result = await replay(d);
                 if (result.status === "ok") {
                     await deleteDraft(d.id);
@@ -257,7 +262,13 @@
         }
         if (sent) {
             const text = sent === 1 ? "1 offline erfasster Vorgang übertragen." : sent + " offline erfasste Vorgänge übertragen.";
-            if (apex.page.isChanged()) { say(text); } else { sessionStorage.setItem("offline-flash", text); location.reload(); }
+            // neu laden zeigt den aktuellen Stand - nicht, solange etwas bearbeitet wird oder ein Dialog offen ist
+            if (apex.page.isChanged() || document.querySelector(".ui-dialog--apex")) {
+                say(text);
+            } else {
+                sessionStorage.setItem("offline-flash", text);
+                location.reload();
+            }
         }
     }
 
@@ -288,7 +299,8 @@
                         ? finish("wartet", "Anmeldung erforderlich")
                         : finish("fehler", "Seite nicht aufrufbar (" + w.document.title + ")");
                 }
-                submitted = submitIn(w, d, finish);
+                // "sendet" erst unmittelbar vor dem Absenden: nur dieser Moment macht den Ausgang unklar
+                return putDraft({ ...d, status: "sendet" }).then(() => { if (!done) { submitted = submitIn(w, d, finish); } });
             };
             frame.name = "offline-sync";
             frame.style.display = "none";
@@ -312,12 +324,15 @@
         } else if (result.already) {
             finish("ok");
         } else {
-            // Ergebnis abfangen: Erfolg = Weiterleitung, Fehler = Meldungen, Status 0 = Verbindung weg
+            // Ergebnis abfangen: Erfolg = Weiterleitung, Fehler = Meldungen, Status 0/502-504 = Server weg.
+            // APEX meldet auch Übertragungsfehler über showErrors - daher erst nach ajaxComplete entscheiden.
             a.navigation.redirect = () => finish("ok");
-            a.message.showErrors = errors => finish("fehler",
-                [].concat(errors).map(e => a.util.stripHTML(String(e.message || e))).join(" "));
+            a.message.showErrors = errors => {
+                const text = [].concat(errors).map(e => a.util.stripHTML(String(e.message || e))).join(" ");
+                setTimeout(() => finish("fehler", text));
+            };
             a.jQuery(w.document).on("ajaxComplete", (event, xhr) => {
-                if (xhr.status === 0) { finish(d.create ? "unklar" : "wartet", "Verbindung unterbrochen"); }
+                if (unreachable(xhr)) { finish(d.create ? "unklar" : "wartet", "Server nicht erreichbar (" + xhr.status + ")"); }
             });
             a.page.submit({ request: d.request, reloadOnSubmit: "S" });
             return true;
@@ -374,7 +389,8 @@
         dialog.innerHTML = "<h2>Offline erfasst</h2>"
             + (list.length ? "<ul>" + list.map(d =>
                 `<li data-id="${esc(d.id)}"><strong>${esc(d.title)}</strong> <small>${new Date(d.ts).toLocaleString()}</small>`
-                + `<div class="is-${esc(d.status)}">${esc(d.status)}${d.info ? ": " + esc(d.info) : ""}</div>`
+                + `<div class="is-${esc(d.status)}">${esc(d.status)}${d.info ? ": " + esc(d.info) : ""}`
+                + (d.status === "unklar" ? " - bitte prüfen, ob er schon angelegt ist" : "") + "</div>"
                 + '<button type="button" class="t-Button t-Button--small" data-act="open">Öffnen</button> '
                 + '<button type="button" class="t-Button t-Button--small t-Button--danger" data-act="drop">Verwerfen</button></li>').join("") + "</ul>"
               : "<p>Keine offenen Erfassungen.</p>")
@@ -383,15 +399,21 @@
         dialog.addEventListener("click", async event => {
             const act = (event.target.closest("[data-act]") || { dataset: {} }).dataset.act;
             const d = list.find(x => x.id === (event.target.closest("li") || { dataset: {} }).dataset.id);
-            if (act === "open") { location.href = liveUrl(d.url) + "#offline-draft=" + encodeURIComponent(d.id); }
-            if (act === "drop") {
+            if (act === "open") {
+                const url = liveUrl(d.url) + "#offline-draft=" + encodeURIComponent(d.id);
+                location.href = url;
+                if (location.href === url) { location.reload(); }   // gleiche Seite: nur der Anker hat sich geändert
+            }
+            if (act === "drop") {                 // erst schließen: der modale Dialog würde die Rückfrage verdecken
+                dialog.close();
                 apex.message.confirm("Diese Erfassung verwerfen? Die Eingaben gehen verloren.", async ok => {
-                    if (ok) { await deleteDraft(d.id); dialog.close(); refresh(); }
+                    if (ok) { await deleteDraft(d.id); refresh(); }
                 });
             }
             if (act === "sync") {                 // Fehler und Konflikte erneut versuchen, "unklar" nie automatisch
                 dialog.close();
-                await Promise.all(list.filter(x => x.status !== "unklar").map(x => putDraft({ ...x, status: "wartet", info: "" })));
+                await Promise.all(list.filter(x => x.status === "fehler" || x.status === "konflikt")
+                    .map(x => putDraft({ ...x, status: "wartet", info: "" })));
                 if (await check()) { sync(); } else { say("Der Server ist nicht erreichbar."); }
             }
             if (act === "close") { dialog.close(); }
@@ -506,12 +528,14 @@
         const done = "offline-prefetch:" + env.APP_SESSION + ":" + pageKey(location.href);
         if (sessionStorage.getItem(done)) { return; }
         const base = location.origin + BASE;
+        // nur reine Seitenlinks: ein Link mit Request könnte auf der Zielseite etwas auslösen
         const urls = new Set([...document.querySelectorAll(".offline-prefetch a[href]")]
-            .map(a => a.href).filter(href => href.startsWith(base)));
+            .map(a => a.href).filter(href => href.startsWith(base) && !new URL(href).searchParams.has("request")));
         for (const url of urls) {
             try { await fetch(url, { headers: { "x-offline-prefetch": "1" } }); } catch (e) { return; }
         }
-        if (document.querySelector(".offline-scan") && !window.BarcodeDetector) {   // Decoder für offline vorhalten
+        // Decoder für offline vorhalten - auch für die vorab geladenen Seiten
+        if (document.querySelector(".offline-scan, .offline-prefetch") && !window.BarcodeDetector) {
             ["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"].forEach(f => fetch(VENDOR + f).catch(() => {}));
         }
         sessionStorage.setItem(done, "1");
@@ -525,6 +549,7 @@
     }
 
     $(document).one("apexreadyend", async () => {
+        if (IS_COPY) { apex.message.hidePageSuccess(); }   // Erfolgsmeldung der gespeicherten Fassung ist veraltet
         $(document).on("apexbeforepagesubmit", onBeforeSubmit);   // nach den Dynamic Actions binden, sonst setzen sie das Abbrechen zurück
         document.querySelectorAll(".offline-signature").forEach(signaturePad);
         document.querySelectorAll(".offline-scan").forEach(scanButton);

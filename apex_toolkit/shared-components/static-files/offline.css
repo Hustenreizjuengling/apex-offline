@@ -20,7 +20,7 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 .offline-panel ul { list-style: none; margin: 0 0 12px; padding: 0; }
 .offline-panel li { padding: 8px 0; border-bottom: 1px solid #ddd; }
 .offline-panel li div { margin: 4px 0 8px; }
-.offline-panel .is-fehler, .offline-panel .is-konflikt { color: #b3261e; }
+.offline-panel .is-fehler, .offline-panel .is-konflikt, .offline-panel .is-unklar { color: #b3261e; }
 
 /* Unterschrift */
 .offline-signature-pad { width: 100%; }
@@ -30,7 +30,8 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 }
 .offline-signature-pad button { margin-top: 4px; }
 
-/* Barcode/QR-Scanner */
+/* Barcode/QR-Scanner: Taste rechts im Feld wie beim Datumsfeld (UT sortiert das Eingabefeld mit order: 3) */
+.t-Form-itemWrapper > .offline-scan-button { order: 4; margin: 0; min-width: 44px; border-radius: 0 4px 4px 0; box-shadow: none; }
 .offline-scan-overlay {
     position: fixed; inset: 0; z-index: 1000; background: #000;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
