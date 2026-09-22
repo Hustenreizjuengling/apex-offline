@@ -1,0 +1,163 @@
+page 1 (
+    name: Aufträge
+    alias: AUFTRAEGE
+    title: Aufträge
+    appearance {
+        pageTemplate: @/standard
+        templateOptions: #DEFAULT#
+    }
+    navigation {
+        cursorFocus: doNotFocusCursor
+    }
+    security {
+        pageAccessProtection: argumentsMustHaveChecksum
+    }
+
+    region auftraege (
+        name: Aufträge
+        type: classicReport
+        source {
+            location: localDatabase
+            type: sqlQuery
+            sqlQuery:
+                ```sql
+                select id,
+                       nr,
+                       titel,
+                       kunde,
+                       ort,
+                       case status
+                           when 'OFFEN'     then 'Offen'
+                           when 'IN_ARBEIT' then 'In Arbeit'
+                           when 'ERLEDIGT'  then 'Erledigt'
+                       end as status,
+                       'Protokoll' as protokoll
+                  from oe_auftrag
+                 order by nr
+                ```
+        }
+        layout {
+            sequence: 10
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+            cssClasses: offline-prefetch
+        }
+        componentAppearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        messages {
+            whenNoDataFound: Keine Aufträge vorhanden.
+        }
+
+        column ID (
+            type: hidden
+            layout {
+                sequence: 10
+            }
+        )
+        column NR (
+            type: link
+            heading {
+                heading: Nr.
+            }
+            layout {
+                sequence: 20
+            }
+            link {
+                target: {
+                    page: 2
+                    items: {
+                        P2_ID: #ID#
+                    }
+                    clearCache: 2
+                }
+                linkText: #NR#
+            }
+        )
+        column TITEL (
+            type: plainText
+            heading {
+                heading: Titel
+            }
+            layout {
+                sequence: 30
+            }
+        )
+        column KUNDE (
+            type: plainText
+            heading {
+                heading: Kunde
+            }
+            layout {
+                sequence: 40
+            }
+        )
+        column ORT (
+            type: plainText
+            heading {
+                heading: Ort
+            }
+            layout {
+                sequence: 50
+            }
+        )
+        column STATUS (
+            type: plainText
+            heading {
+                heading: Status
+            }
+            layout {
+                sequence: 60
+            }
+        )
+        column PROTOKOLL (
+            type: link
+            heading {
+                heading: Protokoll
+            }
+            layout {
+                sequence: 70
+            }
+            link {
+                target: {
+                    page: 3
+                    items: {
+                        P3_ID: #ID#
+                    }
+                    clearCache: 3
+                }
+                linkText: #PROTOKOLL#
+            }
+        )
+    )
+
+    button neu (
+        buttonName: NEU
+        label: Neuer Auftrag
+        layout {
+            sequence: 10
+            region: @auftraege
+            slot: create
+        }
+        appearance {
+            buttonTemplate: @/text
+            hot: true
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: redirectThisApp
+            target: {
+                page: 2
+                items: {
+                    P2_ID:
+                }
+                clearCache: 2
+            }
+        }
+    )
+
+)

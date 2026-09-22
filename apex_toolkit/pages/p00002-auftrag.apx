@@ -1,0 +1,495 @@
+page 2 (
+    name: Auftrag
+    alias: AUFTRAG
+    title: Auftrag
+    appearance {
+        pageTemplate: @/standard
+        templateOptions: #DEFAULT#
+        cssClasses: offline-form
+    }
+    navigation {
+        cursorFocus: doNotFocusCursor
+    }
+    security {
+        pageAccessProtection: argumentsMustHaveChecksum
+        formAutoComplete: false
+    }
+
+    region auftrag (
+        name: Auftrag
+        type: form
+        source {
+            location: localDatabase
+            tableName: OE_AUFTRAG
+        }
+        layout {
+            sequence: 10
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        edit {
+            enabled: true
+        }
+    )
+
+    pageItem P2_ID (
+        type: hidden
+        layout {
+            sequence: 10
+            region: @auftrag
+            slot: regionBody
+        }
+        source {
+            formRegion: @auftrag
+            column: ID
+            dataType: number
+            primaryKey: true
+        }
+        security {
+            sessionStateProtection: checksumRequiredUserLevel
+        }
+    )
+
+    pageItem P2_NR (
+        type: textField
+        label {
+            label: Nr.
+        }
+        layout {
+            sequence: 20
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/required-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            valueRequired: true
+            maxLength: 20
+        }
+        source {
+            formRegion: @auftrag
+            column: NR
+            dataType: varchar2
+        }
+    )
+
+    pageItem P2_TITEL (
+        type: textField
+        label {
+            label: Titel
+        }
+        layout {
+            sequence: 30
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/required-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            valueRequired: true
+            maxLength: 200
+        }
+        source {
+            formRegion: @auftrag
+            column: TITEL
+            dataType: varchar2
+        }
+    )
+
+    pageItem P2_KUNDE (
+        type: textField
+        label {
+            label: Kunde
+        }
+        layout {
+            sequence: 40
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            maxLength: 200
+        }
+        source {
+            formRegion: @auftrag
+            column: KUNDE
+            dataType: varchar2
+        }
+    )
+
+    pageItem P2_ORT (
+        type: textField
+        label {
+            label: Ort
+        }
+        layout {
+            sequence: 50
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            maxLength: 200
+        }
+        source {
+            formRegion: @auftrag
+            column: ORT
+            dataType: varchar2
+        }
+    )
+
+    pageItem P2_STATUS (
+        type: selectList
+        label {
+            label: Status
+        }
+        layout {
+            sequence: 60
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/required-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            valueRequired: true
+        }
+        lov {
+            type: staticValues
+            staticValues: STATIC:Offen;OFFEN,In Arbeit;IN_ARBEIT,Erledigt;ERLEDIGT
+            displayNullValue: false
+        }
+        source {
+            formRegion: @auftrag
+            column: STATUS
+            dataType: varchar2
+        }
+        default {
+            type: static
+            staticValue: OFFEN
+        }
+    )
+
+    pageItem P2_ERLEDIGT_AM (
+        type: datePicker
+        label {
+            label: Erledigt am
+        }
+        layout {
+            sequence: 70
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+        }
+        source {
+            formRegion: @auftrag
+            column: ERLEDIGT_AM
+            dataType: date
+        }
+    )
+
+    pageItem P2_MESSWERT (
+        type: numberField
+        label {
+            label: Messwert
+        }
+        layout {
+            sequence: 80
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+        }
+        source {
+            formRegion: @auftrag
+            column: MESSWERT
+            dataType: number
+        }
+    )
+
+    pageItem P2_ASSET_CODE (
+        type: textField
+        label {
+            label: Anlage (Barcode/QR)
+        }
+        layout {
+            sequence: 90
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            maxLength: 200
+        }
+        advanced {
+            cssClasses: offline-scan
+        }
+        source {
+            formRegion: @auftrag
+            column: ASSET_CODE
+            dataType: varchar2
+        }
+    )
+
+    pageItem P2_BEFUND (
+        type: textarea
+        label {
+            label: Befund / Tätigkeit
+        }
+        layout {
+            sequence: 100
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+            height: 4
+        }
+        validation {
+            maxLength: 4000
+        }
+        source {
+            formRegion: @auftrag
+            column: BEFUND
+            dataType: varchar2
+        }
+    )
+
+    pageItem P2_UNTERSCHRIFT (
+        type: textarea
+        label {
+            label: Unterschrift Kunde
+        }
+        layout {
+            sequence: 110
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-above
+            templateOptions: #DEFAULT#
+        }
+        advanced {
+            cssClasses: offline-signature
+        }
+        source {
+            formRegion: @auftrag
+            column: UNTERSCHRIFT
+            dataType: clob
+        }
+        sessionState {
+            dataType: clob
+        }
+    )
+
+    pageItem P2_UNTERZEICHNER (
+        type: textField
+        label {
+            label: Name des Unterzeichners
+        }
+        layout {
+            sequence: 120
+            region: @auftrag
+            slot: regionBody
+        }
+        appearance {
+            template: @/optional-floating
+            templateOptions: #DEFAULT#
+        }
+        validation {
+            maxLength: 200
+        }
+        source {
+            formRegion: @auftrag
+            column: UNTERZEICHNER
+            dataType: varchar2
+        }
+    )
+
+    button abbrechen (
+        buttonName: CANCEL
+        label: Abbrechen
+        layout {
+            sequence: 10
+            region: @auftrag
+            slot: close
+        }
+        appearance {
+            buttonTemplate: @/text
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: redirectThisApp
+            target: {
+                page: 1
+            }
+        }
+    )
+
+    button loeschen (
+        buttonName: DELETE
+        label: Löschen
+        layout {
+            sequence: 20
+            region: @auftrag
+            slot: delete
+        }
+        appearance {
+            buttonTemplate: @/text
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: submitPage
+            executeValidations: false
+            databaseAction: delete
+            requiresConfirmation: true
+            warnOnUnsavedChanges: doNotCheck
+        }
+        confirmation {
+            message: Auftrag wirklich löschen?
+            style: danger
+        }
+        serverSideCondition {
+            type: itemIsNotNull
+            item: P2_ID
+        }
+    )
+
+    button protokoll (
+        buttonName: PROTOKOLL
+        label: Protokoll
+        layout {
+            sequence: 25
+            region: @auftrag
+            slot: edit
+        }
+        appearance {
+            buttonTemplate: @/text
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: redirectThisApp
+            target: {
+                page: 3
+                items: {
+                    P3_ID: &P2_ID.
+                }
+                clearCache: 3
+            }
+        }
+        serverSideCondition {
+            type: itemIsNotNull
+            item: P2_ID
+        }
+    )
+
+    button speichern (
+        buttonName: SAVE
+        label: Speichern
+        layout {
+            sequence: 30
+            region: @auftrag
+            slot: next
+        }
+        appearance {
+            buttonTemplate: @/text
+            hot: true
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: submitPage
+            databaseAction: update
+        }
+        serverSideCondition {
+            type: itemIsNotNull
+            item: P2_ID
+        }
+    )
+
+    button anlegen (
+        buttonName: CREATE
+        label: Anlegen
+        layout {
+            sequence: 40
+            region: @auftrag
+            slot: next
+        }
+        appearance {
+            buttonTemplate: @/text
+            hot: true
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: submitPage
+            databaseAction: insert
+        }
+        serverSideCondition {
+            type: itemIsNull
+            item: P2_ID
+        }
+    )
+
+    process formular-laden (
+        name: Formular laden
+        type: formInitialization
+        formRegion: @auftrag
+        execution {
+            sequence: 10
+            point: beforeHeader
+        }
+    )
+
+    process formular-speichern (
+        name: Formular speichern
+        type: formAutoRowProcessing
+        formRegion: @auftrag
+        execution {
+            sequence: 10
+        }
+        successMessage {
+            successMessage: Gespeichert.
+        }
+    )
+
+    branch zur-liste (
+        name: Zur Liste
+        execution {
+            sequence: 10
+            point: afterProcessing
+        }
+        behavior {
+            type: pageOrUrl
+            target: {
+                page: 1
+            }
+        }
+        serverSideCondition {
+            type: requestIsContainedInValue
+            value: CREATE,SAVE,DELETE
+        }
+    )
+
+)

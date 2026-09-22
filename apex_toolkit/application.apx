@@ -1,0 +1,82 @@
+app ERFASSUNG (
+    name: Offline-Erfassung
+    version: 1.0.0
+    logo {
+        type: text
+        text: Offline-Erfassung
+    }
+    navigation {
+        homeUrl: {
+            page: 1
+        }
+        loginUrl: {
+            page: LOGIN
+        }
+    }
+    navigationMenu {
+        listTemplate: @/side-navigation-menu
+        templateOptions: [
+            #DEFAULT#
+            js-defaultCollapsed
+            js-navCollapsed--hidden
+            t-TreeNav--styleA
+        ]
+        list: @navigation-menu
+    }
+    navigationBar {
+        list: @navigation-bar
+        listTemplate: @/navigation-bar
+        templateOptions: #DEFAULT#
+    }
+    userInterface {
+        currentTheme: @universal-theme
+        globalPage: 0
+        addBuiltWithApexToFooter: false
+    }
+    appFormatMasks {
+        date: DD.MM.YYYY
+    }
+    javaScript {
+        fileUrls: #APP_FILES#offline.js
+    }
+    css {
+        fileUrls: #APP_FILES#offline.css
+    }
+    authentication {
+        scheme: @oracle-apex-accounts
+    }
+    security {
+        deepLinking: true
+        embedInFrames: allowSameOrigin
+    }
+    sessionStateProtection {
+        checksumSalt: 7C31A9E05B6D48F2A1C3E5D7F9B2A4C6E8D0F1A3B5C7D9E1F3A5B7C9D1E3F5A7
+    }
+    sessionManagement {
+        rejoinSessions: allSessions
+        maxSessionIdleTime: 28800
+        maxSessionLength: 86400
+    }
+    globalization {
+        primaryLanguage: de
+        autoTimeZone: false
+    }
+    runtime {
+        friendlyUrls: true
+        allowFeedback: false
+        compatibilityMode: 26.1
+    }
+    progressiveWebApp {
+        enable: true
+        installable: true
+        display: standalone
+        appShortName: Erfassung
+        appDescription: Aufträge offline bearbeiten, scannen, unterschreiben lassen
+        themeColor: #1F6FB2
+        backgroundColor: #FFFFFF
+    }
+    customServiceWorker {
+        mode: url
+        url: #APP_FILES#offline-sw.js
+    }
+)

@@ -1,0 +1,48 @@
+file "offline.js" (
+    mimeType: application/javascript
+    charSet: utf-8
+)
+
+file "offline-sw.js" (
+    mimeType: application/javascript
+    charSet: utf-8
+)
+
+file "offline.css" (
+    mimeType: text/css
+    charSet: utf-8
+)
+
+file "vendor/barcode-detector/ponyfill.js" (
+    mimeType: application/javascript
+    charSet: utf-8
+)
+
+file "vendor/barcode-detector/zxing-exported.js" (
+    mimeType: application/javascript
+    charSet: utf-8
+)
+
+file "vendor/barcode-detector/zxing_reader.wasm" (
+    mimeType: application/wasm
+)
+
+file "icons/app-icon-144-rounded.png" (
+    mimeType: image/png
+)
+
+file "icons/app-icon-192.png" (
+    mimeType: image/png
+)
+
+file "icons/app-icon-256-rounded.png" (
+    mimeType: image/png
+)
+
+file "icons/app-icon-32.png" (
+    mimeType: image/png
+)
+
+file "icons/app-icon-512.png" (
+    mimeType: image/png
+)

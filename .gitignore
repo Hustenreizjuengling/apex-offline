@@ -1,0 +1,6 @@
+# Lokale Entwicklungshilfen, nicht Teil des Projekts
+CLAUDE.md
+.claude/
+node_modules/
+tests/.state/
+*.log

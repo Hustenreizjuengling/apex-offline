@@ -1,0 +1,240 @@
+page 9999 (
+    name: Login Page
+    alias: LOGIN
+    title: Offline-Erfassung - Anmelden
+    appearance {
+        pageTemplate: @/login
+        templateOptions: #DEFAULT#
+    }
+    navigation {
+        warnOnUnsavedChanges: false
+    }
+    security {
+        authentication: public
+        pageAccessProtection: argumentsMustHaveChecksum
+        formAutoComplete: false
+    }
+
+    region login (
+        name: Offline-Erfassung
+        type: staticContent
+        layout {
+            sequence: 10
+            slot: contentBody
+        }
+        appearance {
+            template: @/login
+            templateOptions: #DEFAULT#
+        }
+        image {
+            fileUrl: #APP_FILES#icons/app-icon-512.png
+        }
+    )
+
+    pageItem P9999_USERNAME (
+        type: textField
+        label {
+            label: Benutzername
+            alignment: right
+        }
+        layout {
+            sequence: 10
+            region: @login
+            slot: regionBody
+            alignment: left
+        }
+        appearance {
+            template: @/hidden
+            templateOptions: #DEFAULT#
+            icon: fa-user
+            width: 40
+            valuePlaceholder: Benutzername
+        }
+        validation {
+            maxLength: 100
+        }
+        advanced {
+            customAttributes: autocomplete="username"
+        }
+        sessionState {
+            storage: request
+        }
+    )
+
+    pageItem P9999_PASSWORD (
+        type: password
+        label {
+            label: Passwort
+            alignment: right
+        }
+        layout {
+            sequence: 20
+            region: @login
+            slot: regionBody
+            alignment: left
+        }
+        appearance {
+            template: @/hidden
+            templateOptions: #DEFAULT#
+            icon: fa-key
+            width: 40
+            valuePlaceholder: Passwort
+        }
+        validation {
+            maxLength: 100
+        }
+        advanced {
+            customAttributes: autocomplete="current-password"
+        }
+        sessionState {
+            storage: request
+        }
+    )
+
+    pageItem P9999_REMEMBER (
+        type: checkbox
+        label {
+            label: Benutzernamen merken
+            alignment: right
+        }
+        layout {
+            sequence: 30
+            region: @login
+            slot: regionBody
+            alignment: left
+        }
+        appearance {
+            template: @/hidden
+            templateOptions: #DEFAULT#
+        }
+        serverSideCondition {
+            type: expression
+            plsqlExpression: apex_authentication.persistent_cookies_enabled
+        }
+    )
+
+    button login (
+        buttonName: LOGIN
+        label: Anmelden
+        layout {
+            sequence: 40
+            region: @login
+            slot: next
+        }
+        appearance {
+            buttonTemplate: @/text
+            hot: true
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            warnOnUnsavedChanges: doNotCheck
+        }
+    )
+
+    process get-username-cookie (
+        name: Get Username Cookie
+        type: executeCode
+        source {
+            plsqlCode:
+                ```plsql
+                :P9999_USERNAME := apex_authentication.get_login_username_cookie;
+                :P9999_REMEMBER := case when :P9999_USERNAME is not null then 'Y' end;
+                ```
+        }
+        execution {
+            sequence: 10
+            point: beforeHeader
+        }
+    )
+
+    process set-username-cookie (
+        name: Set Username Cookie
+        type: invokeApi
+        invoke {
+            package: APEX_AUTHENTICATION
+            procedureOrFunction: SEND_LOGIN_USERNAME_COOKIE
+        }
+        execution {
+            sequence: 10
+        }
+
+        parameter p_consent (
+            parameter {
+                dataType: boolean
+            }
+            value {
+                type: item
+                item: P9999_REMEMBER
+            }
+            advanced {
+                displaySequence: 2
+            }
+        )
+
+        parameter p_username (
+            value {
+                type: expression
+                plsqlExpression: lower( :P9999_USERNAME )
+            }
+            advanced {
+                displaySequence: 1
+            }
+        )
+
+    )
+
+    process login (
+        name: Login
+        type: invokeApi
+        invoke {
+            package: APEX_AUTHENTICATION
+            procedureOrFunction: LOGIN
+        }
+        execution {
+            sequence: 20
+        }
+
+        parameter p_password (
+            value {
+                type: item
+                item: P9999_PASSWORD
+            }
+            advanced {
+                displaySequence: 2
+            }
+        )
+
+        parameter p_set_persistent_auth (
+            parameter {
+                dataType: boolean
+                hasDefault: true
+            }
+            value {
+                type: apiDefault
+            }
+            advanced {
+                displaySequence: 3
+            }
+        )
+
+        parameter p_username (
+            value {
+                type: item
+                item: P9999_USERNAME
+            }
+            advanced {
+                displaySequence: 1
+            }
+        )
+
+    )
+
+    process clear-page-s-cache (
+        name: Clear Page(s) Cache
+        type: clearSessionState
+        execution {
+            sequence: 30
+        }
+    )
+
+)

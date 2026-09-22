@@ -1,0 +1,328 @@
+page 3 (
+    name: Protokoll
+    alias: PROTOKOLL
+    title: Protokoll
+    appearance {
+        pageTemplate: @/standard
+        templateOptions: #DEFAULT#
+    }
+    navigation {
+        cursorFocus: doNotFocusCursor
+    }
+    security {
+        pageAccessProtection: argumentsMustHaveChecksum
+    }
+
+    region protokoll (
+        name: Einsatzprotokoll
+        type: form
+        source {
+            location: localDatabase
+            tableName: OE_AUFTRAG
+        }
+        layout {
+            sequence: 10
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        edit {
+            enabled: false
+        }
+    )
+
+    pageItem P3_ID (
+        type: hidden
+        layout {
+            sequence: 10
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: ID
+            dataType: number
+            primaryKey: true
+        }
+        security {
+            sessionStateProtection: checksumRequiredUserLevel
+        }
+    )
+
+    pageItem P3_NR (
+        type: displayOnly
+        label {
+            label: Auftrag
+        }
+        layout {
+            sequence: 20
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: NR
+            dataType: varchar2
+        }
+    )
+
+    pageItem P3_TITEL (
+        type: displayOnly
+        label {
+            label: Titel
+        }
+        layout {
+            sequence: 30
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: TITEL
+            dataType: varchar2
+        }
+    )
+
+    pageItem P3_KUNDE (
+        type: displayOnly
+        label {
+            label: Kunde
+        }
+        layout {
+            sequence: 40
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: KUNDE
+            dataType: varchar2
+        }
+    )
+
+    pageItem P3_ORT (
+        type: displayOnly
+        label {
+            label: Ort
+        }
+        layout {
+            sequence: 50
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: ORT
+            dataType: varchar2
+        }
+    )
+
+    pageItem P3_STATUS (
+        type: displayOnly
+        label {
+            label: Status
+        }
+        layout {
+            sequence: 60
+            region: @protokoll
+            slot: regionBody
+        }
+        settings {
+            basedOn: lov
+        }
+        lov {
+            type: staticValues
+            staticValues: STATIC:Offen;OFFEN,In Arbeit;IN_ARBEIT,Erledigt;ERLEDIGT
+        }
+        source {
+            formRegion: @protokoll
+            column: STATUS
+            dataType: varchar2
+        }
+    )
+
+    pageItem P3_ERLEDIGT_AM (
+        type: displayOnly
+        label {
+            label: Erledigt am
+        }
+        layout {
+            sequence: 70
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: ERLEDIGT_AM
+            dataType: date
+        }
+    )
+
+    pageItem P3_MESSWERT (
+        type: displayOnly
+        label {
+            label: Messwert
+        }
+        layout {
+            sequence: 80
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: MESSWERT
+            dataType: number
+        }
+    )
+
+    pageItem P3_ASSET_CODE (
+        type: displayOnly
+        label {
+            label: Anlage
+        }
+        layout {
+            sequence: 90
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: ASSET_CODE
+            dataType: varchar2
+        }
+    )
+
+    pageItem P3_BEFUND (
+        type: displayOnly
+        label {
+            label: Befund / Tätigkeit
+        }
+        layout {
+            sequence: 100
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: BEFUND
+            dataType: varchar2
+        }
+    )
+
+    pageItem P3_UNTERSCHRIFT (
+        type: displayOnly
+        label {
+            label: Unterschrift
+        }
+        layout {
+            sequence: 110
+            region: @protokoll
+            slot: regionBody
+        }
+        settings {
+            basedOn: plsql
+            plsqlCode:
+                ```plsql
+                -- Unterschrift als Bild ausgeben (Data-URL, stückweise, jedes Zeichen als Attribut maskiert)
+                for r in (select unterschrift from oe_auftrag where id = :P3_ID and unterschrift like 'data:image/%') loop
+                    htp.prn('<img class="protokoll-unterschrift" alt="Unterschrift des Kunden" src="');
+                    for i in 0 .. trunc((dbms_lob.getlength(r.unterschrift) - 1) / 8000) loop
+                        htp.prn(apex_escape.html_attribute(dbms_lob.substr(r.unterschrift, 8000, i * 8000 + 1)));
+                    end loop;
+                    htp.prn('">');
+                end loop;
+                ```
+        }
+    )
+
+    pageItem P3_UNTERZEICHNER (
+        type: displayOnly
+        label {
+            label: Unterzeichnet von
+        }
+        layout {
+            sequence: 120
+            region: @protokoll
+            slot: regionBody
+        }
+        source {
+            formRegion: @protokoll
+            column: UNTERZEICHNER
+            dataType: varchar2
+        }
+    )
+
+    button zurueck (
+        buttonName: BACK
+        label: Zur Liste
+        layout {
+            sequence: 10
+            region: @protokoll
+            slot: close
+        }
+        appearance {
+            buttonTemplate: @/text
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: redirectThisApp
+            target: {
+                page: 1
+            }
+        }
+    )
+
+    button drucken (
+        buttonName: PRINT
+        label: Drucken / PDF
+        layout {
+            sequence: 20
+            region: @protokoll
+            slot: next
+        }
+        appearance {
+            buttonTemplate: @/text
+            hot: true
+            templateOptions: #DEFAULT#
+        }
+        behavior {
+            action: definedByDynamicAction
+        }
+    )
+
+    process formular-laden (
+        name: Protokoll laden
+        type: formInitialization
+        formRegion: @protokoll
+        execution {
+            sequence: 10
+            point: beforeHeader
+        }
+    )
+
+    dynamicAction drucken-klick (
+        name: Drucken
+        execution {
+            sequence: 10
+        }
+        when {
+            event: click
+            selectionType: button
+            button: @drucken
+        }
+
+        action drucken-js (
+            action: executeJsCode
+            settings {
+                jsCode: window.print();
+            }
+            execution {
+                sequence: 10
+                fireOnInit: false
+            }
+        )
+    )
+
+)
