@@ -10,7 +10,8 @@
  *   3. Bedienelemente per CSS-Klasse an normalen Items (Builder: Advanced > CSS Classes):
  *        offline-signature   Textarea wird zum Unterschriftenfeld (Wert: Bild als Data-URL)
  *        offline-scan        Textfeld bekommt eine Kamera-Taste für Barcode und QR-Code
- *        offline-prefetch    (Region) verlinkte Seiten (Links ohne Request) werden vorab offline verfügbar
+ *        offline-prefetch    (Region) Ziele ihrer Links und Buttons werden im Hintergrund offline verfügbar
+ *                            gemacht - zusammen mit allen Seiten des Navigationsmenüs (Offline-Vorrat)
  * Die Seiten selbst speichert offline-sw.js (Service Worker) bei jedem Online-Aufruf.
  */
 (function (apex, $) {
@@ -23,6 +24,7 @@
     const VOLATILE = ["session", "cs", "clear", "success_msg", "tz", "debug"]; // gleiche Liste in offline-sw.js
     const IS_COPY = !!document.querySelector('meta[name="offline-copy"]');  // Seite kam offline aus dem Cache
     const IN_FRAME = window !== window.top;                              // Dialogseite oder Übertragungsseite
+    const CONTROLLED = !!(navigator.serviceWorker && navigator.serviceWorker.controller); // Seite lief schon über den Service Worker
     const VENDOR = (document.currentScript ? document.currentScript.src : "").replace(/[^/]*$/, "vendor/barcode-detector/");
 
     // Die unsichtbare Übertragungsseite meldet nur "bereit"; alles andere steuert das Hauptfenster.
@@ -37,6 +39,7 @@
     let lastRequest = "";
     let capturing = false;
     let syncing = false;
+    let stocking = false;
 
     /* ---------- Hilfen ---------- */
 
@@ -378,7 +381,8 @@
         const keys = new Set(list.filter(d => !d.create).map(d => d.key));
         pill.classList.toggle("is-offline", !online);
         pill.classList.toggle("has-drafts", list.length > 0);
-        pill.textContent = (online ? "Online" : "Offline") + (list.length ? " · " + list.length + " offen" : "");
+        pill.textContent = (online ? "Online" : "Offline") + (list.length ? " · " + list.length + " offen" : "")
+            + (stocking && online ? " · lädt" : "");
         document.querySelectorAll("a[href]").forEach(a => {
             let key = null;
             try { key = pageKey(a.href); } catch (e) { /* kein Seitenlink */ }
@@ -389,9 +393,11 @@
     async function openPanel() {
         const list = await allDrafts();
         const esc = apex.util.escapeHTML;
+        const stored = (await (await caches.open(CACHE)).keys()).filter(r => r.url.startsWith(location.origin + BASE)).length;
         const dialog = document.createElement("dialog");
         dialog.className = "offline-panel";
         dialog.innerHTML = "<h2>Offline erfasst</h2>"
+            + `<p class="offline-stock">Offline verfügbar: ${stored} Seiten${stocking ? " (wird geladen …)" : ""}</p>`
             + (list.length ? "<ul>" + list.map(d =>
                 `<li data-id="${esc(d.id)}"><strong>${esc(d.title)}</strong> <small>${new Date(d.ts).toLocaleString()}</small>`
                 + `<div class="is-${esc(d.status)}">${esc(d.status)}${d.info ? ": " + esc(d.info) : ""}`
@@ -527,23 +533,57 @@
         }
     }
 
-    /* ---------- 3c. Vorab laden: Links in Regionen mit CSS-Klasse offline-prefetch (einmal je Sitzung) ---------- */
+    /* ---------- 3c. Offline-Vorrat: alle offline benötigten Seiten im Hintergrund laden ----------
+     * Einmal je Sitzung: alle Seiten des Navigationsmenüs und von dort aus (auch mehrstufig) alle Ziele von
+     * Links und Buttons in Regionen mit der CSS-Klasse offline-prefetch - z. B. jeder Auftrag der Liste und
+     * die Seite hinter "Neuer Auftrag". Der Service Worker speichert jede geladene Seite. */
 
-    async function prefetch() {
-        const done = "offline-prefetch:" + env.APP_SESSION + ":" + pageKey(location.href);
-        if (sessionStorage.getItem(done)) { return; }
-        const base = location.origin + BASE;
-        // nur reine Seitenlinks: ein Link mit Request könnte auf der Zielseite etwas auslösen
-        const urls = new Set([...document.querySelectorAll(".offline-prefetch a[href]")]
-            .map(a => a.href).filter(href => href.startsWith(base) && !new URL(href).searchParams.has("request")));
-        for (const url of urls) {
-            try { await fetch(url, { headers: { "x-offline-prefetch": "1" } }); } catch (e) { return; }
+    const STOCK_LIMIT = 300;
+
+    function targets(doc) {                       // Ziele der Links und Buttons in offline-prefetch-Regionen
+        const urls = [...doc.querySelectorAll(".offline-prefetch a[href]")].map(a => a.getAttribute("href"));
+        const scripts = [...doc.querySelectorAll("script:not([src])")].map(s => s.textContent).join("\n");
+        doc.querySelectorAll(".offline-prefetch button[id]").forEach(b => {
+            // APEX bindet das Ziel eines Buttons per Skript: apex.jQuery("#B123").on("click", ... redirect('...'))
+            const m = scripts.match(new RegExp('"#' + b.id + '"[^]{0,120}?navigation\\.redirect\\(\'([^\']+)\''));
+            if (m) { try { urls.push(JSON.parse('"' + m[1] + '"')); } catch (e) { /* anderes Format: überspringen */ } }
+        });
+        return urls;
+    }
+
+    async function stock() {
+        if (stocking) { return; }
+        stocking = true;
+        refresh();
+        const key = "offline-stock:" + env.APP_SESSION;           // bereits geladene Seiten dieser Sitzung
+        const seen = new Set(JSON.parse(sessionStorage.getItem(key) || "[]"));
+        if (CONTROLLED) { seen.add(pageKey(location.href)); }   // diese Seite hat der Service Worker schon gespeichert
+        const queue = [location.href, ...[...document.querySelectorAll("#t_TreeNav a[href], .t-Header-nav a[href]")]
+            .map(a => a.getAttribute("href")), ...targets(document)];
+        let decoder = !!document.querySelector(".offline-scan");
+        for (let loaded = 0; queue.length && loaded < STOCK_LIMIT;) {
+            let url;
+            try { url = new URL(queue.shift(), document.baseURI); } catch (e) { continue; }
+            // nur Seiten dieser App und nie Links mit Request (die könnten auf der Zielseite etwas auslösen)
+            if (!url.href.startsWith(location.origin + BASE) || url.searchParams.has("request") || seen.has(pageKey(url.href))) { continue; }
+            let html;
+            try { html = await (await fetch(url.href, { headers: { "x-offline-prefetch": "1" } })).text(); } catch (e) { break; }
+            seen.add(pageKey(url.href));
+            sessionStorage.setItem(key, JSON.stringify([...seen]));
+            loaded++;
+            decoder = decoder || html.includes("offline-scan");
+            queue.push(...targets(new DOMParser().parseFromString(html, "text/html")));
         }
-        // Decoder für offline vorhalten - auch für die vorab geladenen Seiten
-        if (document.querySelector(".offline-scan, .offline-prefetch") && !window.BarcodeDetector) {
-            ["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"].forEach(f => fetch(VENDOR + f).catch(() => {}));
+        if (decoder && !window.BarcodeDetector) {   // Barcode-Decoder für offline vorhalten
+            await Promise.all(["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"].map(f => fetch(VENDOR + f).catch(() => {})));
         }
-        sessionStorage.setItem(done, "1");
+        stocking = false;
+        refresh();
+    }
+
+    function whenControlled(fn) {                 // erst wenn der Service Worker die Seite kontrolliert, speichert er mit
+        if (!navigator.serviceWorker) { return; }
+        if (navigator.serviceWorker.controller) { fn(); } else { navigator.serviceWorker.addEventListener("controllerchange", fn, { once: true }); }
     }
 
     /* ---------- Start ---------- */
@@ -583,8 +623,8 @@
         }
         await refresh();
         if (await check()) {
-            sync();
-            if (!IS_COPY) { prefetch(); }
+            await sync();                         // erst Offline-Erfasstes übertragen, dann den Vorrat auffrischen
+            if (!IS_COPY && env.APP_USER !== "nobody") { whenControlled(stock); }
         }
     });
 

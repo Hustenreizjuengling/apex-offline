@@ -11,8 +11,10 @@ der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst
 
 ## So funktioniert es
 
-1. **Seiten merken:** Der Service Worker speichert jede aufgerufene Seite der App. Ohne Verbindung
-   (oder wenn der Server 4 Sekunden nicht antwortet) liefert er die zuletzt gespeicherte Fassung.
+1. **Offline-Vorrat:** Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund alle Seiten, die
+   offline gebraucht werden – ohne dass sie jemand öffnen muss (siehe unten). Der Service Worker speichert
+   sie und jede weitere aufgerufene Seite. Ohne Verbindung (oder wenn der Server 4 Sekunden nicht
+   antwortet) liefert er die zuletzt gespeicherte Fassung.
 2. **Offline speichern:** Auf Seiten mit der CSS-Klasse `offline-form` fängt `offline.js` das Absenden
    ab, wenn der Server nicht erreichbar ist, prüft die Pflichtfelder wie online und legt nur die
    **geänderten Felder** (alter und neuer Wert) als Entwurf im Browser ab (IndexedDB).
@@ -65,7 +67,23 @@ Processing*, Verzweigungen. Beispiel: `apex_toolkit/pages/p00002-auftrag.apx`.
 |---|---|---|
 | `offline-signature` | Textarea-Item → Advanced → CSS Classes | Unterschriftenfeld; Wert ist ein Bild als Data-URL (Spalte CLOB, Session State Data Type CLOB, Label-Template „Optional – Above") |
 | `offline-scan` | Textfeld-Item → Advanced → CSS Classes | Kamera-Taste für Barcode und QR-Code; Hand- und Bluetooth-Scanner tippen ohnehin ins Feld |
-| `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | verlinkte Seiten werden beim Online-Aufruf vorab gespeichert (einmal je Sitzung) – so sind auch nie geöffnete Aufträge offline verfügbar. Nur normale Links ohne Request; Links, die einen modalen Dialog öffnen, werden nicht vorab geladen |
+| `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | die Ziele ihrer Links und Buttons gehören zum Offline-Vorrat (siehe unten) |
+
+## Offline-Vorrat: was ohne vorheriges Öffnen offline verfügbar ist
+
+Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund – die Anzeige zeigt dabei „Online · lädt":
+
+1. alle Seiten des **Navigationsmenüs**,
+2. von dort aus, auch mehrstufig, die Ziele aller **Links und Buttons in Regionen mit `offline-prefetch`**.
+
+In der Beispiel-App sind das die Auftragsliste (Menü), jeder Auftrag und jedes Protokoll (Links im Bericht)
+und die Anlegeseite (Button „Neuer Auftrag" in derselben Region) – zwölf Seiten, ohne einen Klick. Die
+Liste der Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
+
+Damit eine Seite zum Vorrat gehört, muss sie also im Menü stehen oder von einer `offline-prefetch`-Region
+aus verlinkt sein. Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
+Links auf modale Dialoge und fremde Apps. Höchstens 300 Seiten je Durchlauf; große Bestände deshalb in der
+Liste auf die eigenen Datensätze filtern (z. B. `where techniker = :APP_USER`).
 
 ## Was der Anwender sieht
 
@@ -91,7 +109,8 @@ Protokoll nach der Übertragung.
 
 ## Grenzen
 
-* Offline verfügbar ist, was online aufgerufen oder vorab geladen wurde – im Stand des letzten Aufrufs.
+* Offline verfügbar ist der Offline-Vorrat und alles, was online aufgerufen wurde – im Stand des letzten
+  Online-Aufrufs bzw. Vorrats (einmal je Sitzung, also z. B. bei der Anmeldung am Morgen).
 * Offline funktionieren Textfelder, Auswahllisten, Optionsfelder, Schalter, Datum, Zahl, Unterschrift und
   Scan. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
   serverseitige Dynamic Actions, Regionen mit Lazy Loading.

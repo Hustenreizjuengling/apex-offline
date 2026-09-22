@@ -83,24 +83,20 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
     if (process.env.OE_DEBUG) { page.on("framenavigated", f => { if (f !== page.mainFrame()) { console.log("           iframe: " + f.url().replace(URL_, "")); } }); }
 
     try {
-        console.log("1. Online: anmelden, Liste öffnen (Service Worker, Vorab-Laden)");
-        await login(page);
-        await page.reload();                                        // jetzt vom Service Worker kontrolliert
-        await page.waitForSelector(".offline-status");
-        check(await page.evaluate(() => !!navigator.serviceWorker.controller), "Seite wird vom Service Worker kontrolliert");
-        await Promise.all([page.waitForURL(/auftrag/), page.getByRole("button", { name: "Neuer Auftrag" }).click()]);
-        await page.waitForSelector("#P2_NR");                       // Anlegeseite einmal online öffnen
-        await gotoList(page);
+        console.log("1. Online nur anmelden: der Offline-Vorrat lädt alle Seiten im Hintergrund");
+        await login(page);                                          // erster Aufruf überhaupt, nichts weiter öffnen
+        const orders = await page.locator(".offline-prefetch td a", { hasText: /^A-\d+|^T/ }).count();
         const cachedPages = () => page.evaluate(async () => {
             const name = (await caches.keys()).find(n => n.startsWith("offline-pages:"));
             return name ? (await (await caches.open(name)).keys()).map(r => r.url) : [];
         });
-        await waitFor(async () => (await cachedPages()).filter(u => /\/auftrag\?p2_id=\d/.test(u)).length >= 5, 30000, "Vorab-Laden")
-            .catch(() => false);                                    // Vorab-Laden der Auftragsseiten
+        const complete = list => list.some(u => /\/auftraege$/.test(u)) && list.some(u => /\/auftrag\?p2_id=$/.test(u))
+            && list.filter(u => /\/auftrag\?p2_id=\d/.test(u)).length >= orders && list.filter(u => /\/protokoll\?p3_id=\d/.test(u)).length >= orders;
+        await waitFor(async () => complete(await cachedPages()) && !/lädt/.test(await pill(page)), 60000, "Offline-Vorrat").catch(() => false);
         const cached = await cachedPages();
-        check(cached.filter(u => /\/auftrag\?p2_id=\d/.test(u)).length >= 5 && cached.some(u => /\/auftraege$/.test(u)),
-            "Liste und alle Auftragsseiten gespeichert: " + cached.map(u => u.replace(URL_, "")).join(" "));
-        console.log("           aktuelle URL: " + page.url().replace(URL_, ""));
+        check(await page.evaluate(() => !!navigator.serviceWorker.controller), "Seite wird vom Service Worker kontrolliert");
+        check(complete(cached), `Vorrat ohne einen Klick: Liste, Anlegeseite, ${orders} Aufträge und Protokolle (`
+            + cached.filter(u => u.startsWith(URL_)).length + " Seiten)");
 
         console.log("2. Offline: Liste und nie geöffneter Auftrag kommen aus dem Cache");
         await field.setOffline(true);
