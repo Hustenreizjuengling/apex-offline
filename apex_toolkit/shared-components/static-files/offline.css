@@ -1,14 +1,15 @@
 /* offline.css - Darstellung der Offline-Erfassung (gehört zu offline.js) */
 
-/* Verbindungsstatus unten links: grün = online, orange = Entwürfe offen, rot = offline */
+/* Verbindungsstatus in der Kopfleiste neben dem Benutzer: grün = online, orange = Entwürfe offen, rot = offline */
 .offline-status {
-    position: fixed; left: 12px; bottom: 12px; z-index: 900;
-    border: 0; border-radius: 999px; padding: 6px 12px; cursor: pointer;
+    border: 0; border-radius: 999px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
     font: 600 12px/1.2 system-ui, sans-serif; color: #fff; background: #1e7d3c;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
 }
 .offline-status.has-drafts { background: #a15c00; }
 .offline-status.is-offline { background: #b3261e; }
+.offline-status-item { display: flex; align-items: center; margin-inline-end: 8px; }
+/* Seiten ohne Navigationsleiste: unten links */
+body > .offline-status { position: fixed; left: 12px; bottom: 12px; z-index: 900; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
 
 /* Links auf Datensätze mit offenem Entwurf */
 a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; font-size: .8em; }

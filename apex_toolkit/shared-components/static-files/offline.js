@@ -41,7 +41,12 @@
     /* ---------- Hilfen ---------- */
 
     const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
-    const say = text => apex.message.showPageSuccess(text);
+    let sayTimer = 0;
+    const say = text => {                         // Hinweis oben; verschwindet nach 5 s wieder (verdeckt sonst die Statusanzeige)
+        apex.message.showPageSuccess(text);
+        clearTimeout(sayTimer);
+        sayTimer = setTimeout(() => apex.message.hidePageSuccess(), 5000);
+    };
     const isDelete = request => /DELETE/i.test(request || "");
     const saves = request => !!request && !apex.item(request).node;         // Enter- oder Auswahllisten-Submit speichert nicht
     const isForm = () => document.body.classList.contains("offline-form");   // Page > Appearance > CSS Classes
@@ -567,7 +572,15 @@
             if (localStorage.getItem(userKey) && localStorage.getItem(userKey) !== env.APP_USER) { caches.delete(CACHE); }
             localStorage.setItem(userKey, env.APP_USER);
         }
-        document.body.append(pill);
+        const navBar = document.querySelector(".t-NavigationBar");   // Kopfleiste neben dem Benutzer
+        if (navBar) {
+            const entry = document.createElement("li");
+            entry.className = "t-NavigationBar-item offline-status-item";
+            entry.append(pill);
+            navBar.prepend(entry);
+        } else {
+            document.body.append(pill);           // Seite ohne Navigationsleiste: unten links
+        }
         await refresh();
         if (await check()) {
             sync();
