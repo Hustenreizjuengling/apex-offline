@@ -113,6 +113,11 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         console.log("3. Offline erfassen: Status, Befund, Messwert, Scan-Feld, Unterschrift");
         await page.selectOption("#P2_STATUS", "ERLEDIGT");
         await page.fill("#P2_BEFUND", "Filter getauscht " + RUN);
+        await page.fill("#P2_MESSWERT", "150");                     // Regel am Item: 30 bis 90
+        await page.getByRole("button", { name: "Speichern" }).click();
+        await page.waitForSelector("#P2_MESSWERT_error:has-text('zwischen 30 und 90')");
+        check(/auftrag\?/.test(page.url()) && !/offen/.test(await pill(page)), "Messwert 150 offline abgelehnt: "
+            + await page.locator("#P2_MESSWERT_error").innerText());
         await page.fill("#P2_MESSWERT", "42,5");
         await page.fill("#P2_ASSET_CODE", "ANL-" + RUN);
         await page.fill("#P2_UNTERZEICHNER", "Erika Muster");

@@ -269,6 +269,10 @@ page 2 (
             template: @/optional-floating
             templateOptions: #DEFAULT#
         }
+        settings {
+            minValue: 30
+            maxValue: 90
+        }
         source {
             formRegion: @auftrag
             column: MESSWERT

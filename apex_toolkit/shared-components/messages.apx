@@ -1,0 +1,55 @@
+textMessage APEX.PAGE_ITEM_IS_REQUIRED (
+    message {
+        text: "#LABEL# ist ein Pflichtfeld."
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage APEX.NUMBER_FIELD.VALUE_NOT_BETWEEN_MIN_MAX (
+    message {
+        text: "#LABEL# muss zwischen %0 und %1 liegen."
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage APEX.NUMBER_FIELD.VALUE_LESS_MIN_VALUE (
+    message {
+        text: "#LABEL# muss mindestens %0 sein."
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage APEX.NUMBER_FIELD.VALUE_GREATER_MAX_VALUE (
+    message {
+        text: "#LABEL# darf höchstens %0 sein."
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage APEX.NUMBER_FIELD.VALUE_INVALID (
+    message {
+        text: "#LABEL# muss eine gültige Zahl sein."
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage FLOW.SINGLE_VALIDATION_ERROR (
+    message {
+        text: "1 Fehler"
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage FLOW.VALIDATION_ERROR (
+    message {
+        text: "%0 Fehler"
+        language: de
+        usedInJavaScript: true
+    }
+)

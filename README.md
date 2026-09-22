@@ -64,6 +64,22 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
 Alles andere bleibt wie gewohnt: Felder, Pflichtfelder, Validierungen, *Form – Automatic Row
 Processing*, Verzweigungen. Beispiel: `apex_toolkit/pages/p00002-auftrag.apx`.
 
+## Prüfungen offline
+
+Beim Offline-Speichern prüft der Browser alles, was APEX am **Item selbst** festlegt: *Value Required*,
+*Maximum Length*, bei Zahlenfeldern *Minimum/Maximum Value*, bei Textfeldern der Subtyp (E-Mail, URL).
+Diese Regeln gelten online zusätzlich auf dem Server – eine Regel, an einer Stelle, ohne JavaScript.
+Beispiel: `P2_MESSWERT` mit Minimum 30 und Maximum 90 lehnt 150 offline sofort am Feld ab.
+
+**Validierungen** (Page → Validations, PL/SQL) brauchen die Datenbank. Sie laufen bei der Übertragung;
+schlägt eine fehl, bekommt der Entwurf den Status *fehler* mit der Meldung, und der Anwender korrigiert ihn
+auf der Seite. Einfache Bereichs- und Pflichtprüfungen deshalb am Item festlegen, echte Geschäftsregeln
+(Abgleich mit anderen Tabellen, mehrere Datensätze) als Validierung.
+
+Die Meldungen der Browser-Prüfung sind APEX-Texte. `shared-components/messages.apx` stellt die wichtigsten
+auf Deutsch (*Shared Components → Text Messages*, „Used in JavaScript"), falls das deutsche Sprachpaket
+auf der Instanz fehlt.
+
 ## Bedienelemente per CSS-Klasse
 
 | Klasse | Wo | Ergebnis |
