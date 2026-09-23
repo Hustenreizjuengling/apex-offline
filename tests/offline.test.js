@@ -1,14 +1,13 @@
 /*
  * Browsertest der Offline-Erfassung gegen eine laufende Instanz (Playwright, Chromium).
  *
- *   OE_URL=https://host:8443/ords/r/hr_dev/erfassung OE_USER=... OE_PASSWORD=... \
- *   PLAYWRIGHT=<Pfad zu node_modules/playwright> node tests/offline.test.js
+ *   OE_URL=https://host:8443/ords/r/hr_dev/erfassung OE_USER=... OE_PASSWORD=... npm test
  *
  * Ablauf wie im Außendienst: online anmelden und die Liste öffnen, Verbindung trennen, Aufträge
  * bearbeiten, unterschreiben, neuen Auftrag anlegen, wieder verbinden - dann prüfen, dass alles
  * über die normalen APEX-Seiten auf dem Server angekommen ist. Dazu Konflikt und abgelaufene Sitzung.
  */
-const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
+const { chromium } = require("playwright");
 
 const URL_ = (process.env.OE_URL || "").replace(/\/$/, "");
 const USER = process.env.OE_USER, PASSWORD = process.env.OE_PASSWORD;

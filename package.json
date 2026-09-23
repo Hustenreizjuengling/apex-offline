@@ -1,0 +1,11 @@
+{
+  "name": "offline-erfassung",
+  "private": true,
+  "description": "Browsertest der Offline-Erfassung für Oracle APEX",
+  "scripts": {
+    "test": "node tests/offline.test.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

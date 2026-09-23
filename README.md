@@ -164,6 +164,35 @@ keine Data-URLs über 4000 Zeichen darstellen kann. Offline erfasste Daten ersch
 * Gespeicherte Seiten enthalten die Daten, die der Anwender gesehen hat. Meldet sich auf dem Gerät ein
   anderer Benutzer an, werden sie gelöscht; Entwürfe sieht und überträgt nur ihr Ersteller.
 
+## Release und Update
+
+1. **Datenbank zuerst:** neue Tabellen und Spalten vor der App einspielen – sonst zeigen Seiten auf
+   Spalten, die es noch nicht gibt.
+2. **Version erhöhen:** `version` in `application.apx` (Fehlerkorrektur 1.6.1, neues Verhalten 1.7.0).
+   Sie steht in der Fußzeile der App; so sieht man auf jedem Gerät, welcher Stand läuft.
+3. **Builder-Änderungen sichern:** `apex import` ersetzt die ganze App. Was seit dem letzten Import im
+   Builder geändert wurde, vorher exportieren und übernehmen
+   (`apex export -applicationid <id> -exptype APEXLANG -split`).
+4. **Einspielen:** `apex import -input apex_toolkit -workspace <workspace>` und auf „Import erfolgreich"
+   achten – ein fehlgeschlagener Import lässt den alten Stand aktiv.
+
+Was danach auf den Geräten passiert:
+
+* **Online** holt der Browser beim nächsten Seitenaufruf den neuen Service Worker, der sofort übernimmt.
+  Geänderte JavaScript- und CSS-Dateien kommen über einen neuen versionierten Pfad (`files/static/v…`),
+  es wird also nichts Veraltetes aus dem Browser-Cache verwendet.
+* **Gespeicherte Seiten** werden beim nächsten Aufruf der Seite oder beim nächsten Offline-Vorrat (neue
+  Sitzung, also in der Regel bei der nächsten Anmeldung) durch die neue Fassung ersetzt. Bis dahin zeigt
+  ein Gerät offline die alte Fassung – mit den alten Dateien, die dafür im Browser erhalten bleiben.
+* **Offene Entwürfe** aus der alten Fassung werden durch die neue Seite übertragen. Gibt es ein Feld nicht
+  mehr, bekommt der Entwurf den Status *fehler* („Nicht übernommen: …"); verlangt die neue Fassung ein
+  zusätzliches Pflichtfeld, lehnt der Server ab. In beiden Fällen öffnet der Anwender den Entwurf,
+  ergänzt und speichert – es geht nichts still verloren.
+* Deshalb Felder auf Erfassungsseiten nicht umbenennen oder löschen, solange Geräte noch offline
+  Erfasstes haben; bei größeren Umbauten vorher übertragen lassen.
+* Alte Dateiversionen bleiben im Browser (je Release rund 1–2 MB mit Barcode-Decoder). Aufräumen lässt
+  sich das über „Websitedaten löschen" im Browser – vorher alles übertragen.
+
 ## Beispiel-App installieren
 
 ```text
@@ -179,11 +208,15 @@ Aufruf: `https://<server>/ords/r/<workspace>/erfassung`. Rückbau: App löschen,
 ## Test
 
 `tests/offline.test.js` spielt den Außendienst im echten Browser (Playwright, Chromium) gegen eine
-laufende Instanz durch: Liste und nie geöffneter Auftrag offline, Erfassen mit Unterschrift, Neuanlage,
-automatische Übertragung, Konflikt, abgelaufene Sitzung mit neuer Anmeldung, Scannen mit simulierter
-Kamera ohne Zugriff auf fremde Server.
+laufende Instanz durch: Offline-Vorrat, Liste und nie geöffneter Auftrag offline, Erfassen mit
+Unterschrift, Prüfung am Item, Neuanlage, automatische Übertragung, Konflikt, abgelaufene Sitzung mit
+neuer Anmeldung, Scannen mit simulierter Kamera ohne Zugriff auf fremde Server, Verwerfen, Foto, Seite
+nur für online.
 
 ```text
-OE_URL=https://<server>/ords/r/<workspace>/erfassung OE_USER=<benutzer> OE_PASSWORD=<kennwort> \
-PLAYWRIGHT=<pfad>/node_modules/playwright node tests/offline.test.js
+npm install                                  # einmalig: Playwright
+npx playwright install chromium              # einmalig, falls Chromium noch fehlt
+OE_URL=https://<server>/ords/r/<workspace>/erfassung OE_USER=<benutzer> OE_PASSWORD=<kennwort> npm test
 ```
+
+Der Test legt Aufträge und Fotos an (Kennung `T…` im Titel) und ändert die fünf Beispielaufträge.
