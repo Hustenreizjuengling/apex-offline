@@ -1,0 +1,137 @@
+page 5 (
+    name: Auswertung
+    alias: AUSWERTUNG
+    title: Auswertung
+    appearance {
+        pageTemplate: @/standard
+        templateOptions: #DEFAULT#
+        cssClasses: online-only
+    }
+    navigation {
+        cursorFocus: doNotFocusCursor
+    }
+    security {
+        pageAccessProtection: argumentsMustHaveChecksum
+    }
+
+    region status (
+        name: Aufträge je Status
+        type: classicReport
+        source {
+            location: localDatabase
+            type: sqlQuery
+            sqlQuery:
+                ```sql
+                select case status
+                           when 'OFFEN'     then 'Offen'
+                           when 'IN_ARBEIT' then 'In Arbeit'
+                           when 'ERLEDIGT'  then 'Erledigt'
+                       end as status,
+                       count(*) as anzahl
+                  from oe_auftrag
+                 group by status
+                 order by min(case status when 'OFFEN' then 1 when 'IN_ARBEIT' then 2 else 3 end)
+                ```
+        }
+        layout {
+            sequence: 10
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        componentAppearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+
+        column STATUS (
+            type: plainText
+            heading {
+                heading: Status
+            }
+            layout {
+                sequence: 10
+            }
+        )
+        column ANZAHL (
+            type: plainText
+            heading {
+                heading: Anzahl
+            }
+            layout {
+                sequence: 20
+            }
+        )
+    )
+
+    region aenderungen (
+        name: Zuletzt geändert
+        type: classicReport
+        source {
+            location: localDatabase
+            type: sqlQuery
+            sqlQuery:
+                ```sql
+                select nr,
+                       titel,
+                       to_char(updated_at, 'DD.MM.YYYY HH24:MI') as geaendert,
+                       updated_by as von
+                  from oe_auftrag
+                 order by updated_at desc
+                 fetch first 10 rows only
+                ```
+        }
+        layout {
+            sequence: 20
+            slot: body
+        }
+        appearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        componentAppearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+
+        column NR (
+            type: plainText
+            heading {
+                heading: Nr.
+            }
+            layout {
+                sequence: 10
+            }
+        )
+        column TITEL (
+            type: plainText
+            heading {
+                heading: Titel
+            }
+            layout {
+                sequence: 20
+            }
+        )
+        column GEAENDERT (
+            type: plainText
+            heading {
+                heading: Geändert
+            }
+            layout {
+                sequence: 30
+            }
+        )
+        column VON (
+            type: plainText
+            heading {
+                heading: Von
+            }
+            layout {
+                sequence: 40
+            }
+        )
+    )
+
+)

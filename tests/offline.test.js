@@ -51,6 +51,7 @@ async function drafts(page) {                   // Entwürfe dieses Benutzers au
             + (window.oeDebug ? " " + JSON.stringify(Object.fromEntries(Object.entries(d.items).map(([k, v]) => [k, [String(v.old).slice(0, 20), String(v.val).slice(0, 20)]]))) : "")).join("; ");
     }).catch(e => "?" + e.message);
 }
+const IS_COPY_PAGE = html => html.includes('name="offline-copy"');
 async function waitFor(fn, ms = 30000, what = "Bedingung") {
     const end = Date.now() + ms;
     while (Date.now() < end) { if (await fn()) { return true; } await new Promise(r => setTimeout(r, 500)); }
@@ -265,6 +266,24 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         await gotoList(page);
         await openOrder(page, "A-1003");
         check(await page.locator("figure img").count() >= 1, "Foto auch am Auftrag sichtbar");
+
+        console.log("12. Seite nur online (Auswertung): ohne Verbindung Hinweis statt Inhalt");
+        const report = () => page.getByRole("heading", { name: "Aufträge je Status" });
+        const notice = () => page.locator(".online-only-notice");
+        await page.goto(URL_ + "/auswertung?session=" + await page.evaluate(() => apex.env.APP_SESSION));
+        await page.waitForSelector(".offline-status");
+        check(await report().isVisible() && await notice().isHidden(), "online: Auswertung sichtbar");
+        await field.setOffline(true);
+        await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+        await waitFor(() => notice().isVisible(), 10000, "Hinweis bei Verbindungsverlust");
+        check(await report().isHidden(), "Verbindung weg: Hinweis „" + (await notice().locator("h2").innerText()) + "“ statt Inhalt");
+        await page.reload();
+        await page.waitForSelector(".offline-status");
+        check(await notice().isVisible() && await report().isHidden(), "offline aufgerufen: Hinweis statt gespeicherter Zahlen");
+        await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        await waitFor(async () => await report().isVisible().catch(() => false) && !IS_COPY_PAGE(await page.content()), 20000, "Seite neu geladen");
+        check(await notice().isHidden(), "wieder online: aktuelle Auswertung ohne Hinweis");
 
         check(errors.length === 0, "keine JavaScript-Fehler" + (errors.length ? ": " + errors.join(" | ") : ""));
     } catch (e) {

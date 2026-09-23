@@ -13,6 +13,8 @@
  *        offline-scan        Textfeld bekommt eine Kamera-Taste für Barcode und QR-Code
  *        offline-prefetch    (Region) Ziele ihrer Links und Buttons werden im Hintergrund offline verfügbar
  *                            gemacht - zusammen mit allen Seiten des Navigationsmenüs (Offline-Vorrat)
+ *   4. Seiten nur für online (Page > Appearance > CSS Classes: online-only): ohne Verbindung zeigen sie
+ *      statt des Inhalts einen Hinweis (offline.css), mit Verbindung wieder den aktuellen Inhalt.
  * Die Seiten selbst speichert offline-sw.js (Service Worker) bei jedem Online-Aufruf.
  */
 (function (apex, $) {
@@ -362,6 +364,8 @@
         if (ok !== online) {
             online = ok;
             refresh();
+            // gespeicherte Fassung einer Seite nur für online: jetzt den aktuellen Inhalt laden
+            if (ok && IS_COPY && document.body.classList.contains("online-only")) { location.reload(); return ok; }
             if (ok) { sync(); }
         }
         return ok;
@@ -375,6 +379,7 @@
     pill.addEventListener("click", openPanel);
 
     async function refresh() {
+        document.documentElement.classList.toggle("offline-mode", !online);   // für Seiten mit online-only
         const list = await allDrafts();
         const keys = new Set(list.filter(d => !d.create).map(d => d.key));
         pill.classList.toggle("is-offline", !online);
@@ -667,6 +672,15 @@
             navBar.prepend(entry);
         } else {
             document.body.append(pill);           // Seite ohne Navigationsleiste: unten links
+        }
+        if (document.body.classList.contains("online-only")) {   // Hinweis, der ohne Verbindung den Inhalt ersetzt
+            const notice = document.createElement("div");
+            notice.className = "online-only-notice";
+            notice.innerHTML = "<h2>Nur online verfügbar</h2><p>Diese Seite braucht eine Verbindung zum Server. "
+                + "Alle offline verfügbaren Seiten sind weiter über das Menü erreichbar.</p>"
+                + '<button type="button" class="t-Button">Erneut versuchen</button>';
+            notice.querySelector("button").addEventListener("click", () => location.reload());
+            (document.getElementById("main") || document.body).prepend(notice);
         }
         await refresh();
         if (await check()) {

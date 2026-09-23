@@ -43,6 +43,18 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 }
 .offline-scan-overlay video { width: 100%; max-height: 80vh; object-fit: contain; }
 
+/* Seiten nur für online (Page > Appearance > CSS Classes: online-only): ohne Verbindung Hinweis statt Inhalt.
+   Die gespeicherte Fassung (meta offline-copy) blendet den Inhalt schon vor dem JavaScript aus. */
+.online-only-notice {
+    display: none; max-width: 36rem; margin: 2rem auto; padding: 1.5rem; text-align: center;
+    border-radius: 8px; background: var(--ut-component-background-color, #fff); box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+}
+.online-only-notice h2 { margin: 0 0 .5rem; font-size: 1.25rem; }
+html.offline-mode body.online-only #main > :not(.online-only-notice),
+html:has(meta[name="offline-copy"]) body.online-only #main > :not(.online-only-notice) { display: none; }
+html.offline-mode body.online-only .online-only-notice,
+html:has(meta[name="offline-copy"]) body.online-only .online-only-notice { display: block; }
+
 /* Drucken (Protokoll): nur der Inhalt */
 @media print {
     .offline-status, .offline-signature-pad button, .t-Header, .t-Body-nav, .t-Footer,

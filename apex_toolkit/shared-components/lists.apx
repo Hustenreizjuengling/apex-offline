@@ -60,4 +60,19 @@ list navigation-menu (
         }
     )
 
+    entry auswertung (
+        label: Auswertung
+        icon {
+            imageIconCssClasses: fa-bar-chart
+        }
+        layout {
+            sequence: 20
+        }
+        link {
+            target: {
+                page: 5
+            }
+        }
+    )
+
 )
