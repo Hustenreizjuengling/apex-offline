@@ -163,6 +163,9 @@ keine Data-URLs über 4000 Zeichen darstellen kann. Offline erfasste Daten ersch
   wurde.
 * Gespeicherte Seiten enthalten die Daten, die der Anwender gesehen hat. Meldet sich auf dem Gerät ein
   anderer Benutzer an, werden sie gelöscht; Entwürfe sieht und überträgt nur ihr Ersteller.
+* Die installierte App startet offline ohne Anmeldung und zeigt die gespeicherten Seiten – sonst wäre sie
+  offline nicht nutzbar. Abmelden löscht bewusst nichts. Schutz der Daten auf dem Gerät ist die
+  Gerätesperre (PIN, Face ID) und die Geräteverwaltung, nicht die App.
 
 ## Release und Update
 
