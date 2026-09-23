@@ -1,3 +1,5 @@
+![apex-offline – native APEX-Seiten, die ohne Netz weiterarbeiten](docs/images/banner.png)
+
 # Offline-Erfassung für Oracle APEX
 
 Die App wird ganz normal im **APEX Builder** gebaut – Seiten, Formulare, Validierungen, Prozesse.
@@ -9,7 +11,11 @@ APEX-Seite** abgesendet – mit genau den Validierungen und Prozessen aus dem Bu
 Es gibt keine JSON-Definitionen, keinen Seitengenerator, kein eigenes Server-API und keinen Nachbau
 der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst nichts.
 
+![Offline erfassen, offene Entwürfe, Protokoll mit Unterschrift und Fotos, Seite nur für online](docs/images/screens.png)
+
 ## So funktioniert es
+
+![Ablauf: online anmelden, ohne Netz erfassen, automatisch senden, Server prüft](docs/images/ablauf.png)
 
 1. **Offline-Vorrat:** Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund alle Seiten, die
    offline gebraucht werden – ohne dass sie jemand öffnen muss (siehe unten). Der Service Worker speichert
@@ -237,6 +243,14 @@ OE_URL=https://<server>/ords/r/<workspace>/erfassung OE_USER=<benutzer> OE_PASSW
 ```
 
 Der Test legt Aufträge und Fotos an (Kennung `T…` im Titel) und ändert die fünf Beispielaufträge.
+
+## Logo und Bilder
+
+Das Logo ist `docs/images/logo.svg`: ein Arbeitsschein mit umgeschlagener Ecke – vorgemerkt, wartet auf
+die Übertragung (Bernstein wie „offen" in der App). Banner, Ablauf, Screenshots und die Vorschau für geteilte
+Links entstehen aus den Vorlagen in `docs/images/src/` mit `node docs/images/src/render.js` (Schrift
+Bahnschrift, in Windows enthalten). `docs/images/social.png` wird unter *Settings → General → Social preview*
+des Repos hochgeladen.
 
 ## Lizenz
 

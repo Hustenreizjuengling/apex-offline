@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="brand.css">
+<style>
+    .canvas { width: 1280px; padding: 48px 56px 40px; border-radius: 18px; }
+    .reihe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 36px; }
+    figure { margin: 0; }
+    .geraet { border: 9px solid var(--tinte); border-radius: 34px; overflow: hidden; background: #fff;
+              box-shadow: 0 1px 0 rgba(22, 50, 79, .25); }
+    .geraet img { display: block; width: 100%; }
+    figcaption { margin-top: 18px; }
+    h3 { margin: 0 0 6px; font-weight: 600; font-size: 22px; color: var(--tinte); }
+    p { margin: 0; font-weight: 350; font-stretch: 87.5%; font-size: 17px; line-height: 1.4; color: var(--text-leise); }
+</style>
+</head>
+<body>
+<div class="canvas raster-hell">
+    <div class="reihe">
+        <figure>
+            <div class="geraet"><img src="app-offline.png" alt=""></div>
+            <figcaption><h3>Offline erfassen</h3><p>Kein Netz: Speichern legt einen Entwurf auf dem Gerät an.</p></figcaption>
+        </figure>
+        <figure>
+            <div class="geraet"><img src="app-entwuerfe.png" alt=""></div>
+            <figcaption><h3>Offene Entwürfe</h3><p>Jede Erfassung mit Status – öffnen, verwerfen oder gleich übertragen.</p></figcaption>
+        </figure>
+        <figure>
+            <div class="geraet"><img src="app-protokoll.png" alt=""></div>
+            <figcaption><h3>Protokoll</h3><p>Unterschrift und Fotos, druckfertig aus der Datenbank.</p></figcaption>
+        </figure>
+        <figure>
+            <div class="geraet"><img src="app-nur-online.png" alt=""></div>
+            <figcaption><h3>Nur online</h3><p>Auswertungen zeigen ohne Netz einen Hinweis statt alter Zahlen.</p></figcaption>
+        </figure>
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="brand.css">
+<style>
+    .canvas { width: 1280px; padding: 48px 56px 44px; border-radius: 18px; }
+    .schritte { display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; }
+    .schritt { display: flex; flex-direction: column; }
+    .kopf { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+    .nr { width: 34px; height: 34px; border-radius: 50%; background: var(--tinte); color: #fff;
+          font-weight: 600; font-size: 18px; display: grid; place-items: center; flex: none; }
+    .kopf svg { display: block; }
+    h2 { margin: 0 0 8px; font-weight: 600; font-size: 25px; line-height: 1.15; color: var(--tinte); }
+    p { margin: 0; font-weight: 350; font-stretch: 87.5%; font-size: 19px; line-height: 1.4; color: var(--text-leise); max-width: 250px; }
+    .netz { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 6px; margin-top: 34px; }
+    .netz div { height: 30px; border-radius: 15px; color: #fff; font-size: 15px; font-weight: 500;
+                display: flex; align-items: center; padding: 0 16px; }
+    .an { background: var(--online); }
+    .aus { background: var(--offline); }
+</style>
+</head>
+<body>
+<div class="canvas raster-hell">
+    <div class="schritte">
+        <div class="schritt">
+            <div class="kopf">
+                <span class="nr">1</span>
+                <!-- Telefon, in das Blätter fallen -->
+                <svg width="96" height="84" viewBox="0 0 96 84" fill="none" stroke="#16324F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="46" y="4" width="44" height="76" rx="9" fill="#fff"/>
+                    <path d="M62 11 H74"/>
+                    <rect x="54" y="24" width="28" height="12" rx="2"/>
+                    <rect x="54" y="42" width="28" height="12" rx="2"/>
+                    <rect x="54" y="60" width="28" height="12" rx="2"/>
+                    <path d="M8 18 H30 V40 L22 48 H8 Z" fill="#fff"/>
+                    <path d="M30 40 L22 48 V40 Z" fill="#F0A202" stroke="none"/>
+                    <path d="M14 58 V74 M8 68 L14 74 L20 68"/>
+                </svg>
+            </div>
+            <h2>Online anmelden</h2>
+            <p>Die App lädt im Hintergrund alle Seiten, die offline gebraucht werden.</p>
+        </div>
+        <div class="schritt">
+            <div class="kopf">
+                <span class="nr">2</span>
+                <!-- Blatt mit Eselsohr, daneben kein Netz -->
+                <svg width="96" height="84" viewBox="0 0 96 84" fill="none" stroke="#16324F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 6 H52 V58 L40 70 H8 Z" fill="#fff"/>
+                    <path d="M16 20 H44 M16 32 H40 M16 44 H30"/>
+                    <path d="M15 58 q4 -8 8 0 t8 0" stroke-width="2.5"/>
+                    <path d="M52 58 L40 70 V58 Z" fill="#F0A202" stroke="#F0A202"/>
+                    <path d="M66 66 V58 M74 66 V50 M82 66 V42 M90 66 V34" stroke="#9AAEC0"/>
+                    <path d="M64 36 L92 68" stroke="#B3261E"/>
+                </svg>
+            </div>
+            <h2>Ohne Netz erfassen</h2>
+            <p>Änderungen, Fotos und Unterschrift bleiben als Entwurf auf dem Gerät.</p>
+        </div>
+        <div class="schritt">
+            <div class="kopf">
+                <span class="nr">3</span>
+                <!-- Entwurf geht in dieselbe Seite -->
+                <svg width="96" height="84" viewBox="0 0 96 84" fill="none" stroke="#16324F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="40" y="6" width="52" height="72" rx="6" fill="#fff"/>
+                    <path d="M40 20 H92"/>
+                    <path d="M48 32 H84 M48 44 H78 M48 56 H66"/>
+                    <path d="M4 30 H18 V48 L12 54 H4 Z" fill="#fff" stroke-width="2.5"/>
+                    <path d="M18 48 L12 54 V48 Z" fill="#F0A202" stroke="#F0A202" stroke-width="2"/>
+                    <path d="M22 42 H34 M29 37 L34 42 L29 47"/>
+                </svg>
+            </div>
+            <h2>Automatisch senden</h2>
+            <p>Sobald wieder Netz da ist, geht jeder Entwurf durch dieselbe APEX-Seite.</p>
+        </div>
+        <div class="schritt">
+            <div class="kopf">
+                <span class="nr">4</span>
+                <!-- Datenbank mit Haken -->
+                <svg width="96" height="84" viewBox="0 0 96 84" fill="none" stroke="#16324F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 14 V66 C14 74 62 74 62 66 V14" fill="#fff"/>
+                    <ellipse cx="38" cy="14" rx="24" ry="8" fill="#fff"/>
+                    <path d="M14 32 C14 40 62 40 62 32 M14 50 C14 58 62 58 62 50"/>
+                    <circle cx="72" cy="60" r="16" fill="#1E7D3C" stroke="#fff" stroke-width="3"/>
+                    <path d="M64 60 L70 66 L81 54" stroke="#fff" stroke-width="3.5"/>
+                </svg>
+            </div>
+            <h2>Server prüft</h2>
+            <p>Validierungen und Prozesse aus dem Builder prüfen und speichern.</p>
+        </div>
+    </div>
+    <div class="netz">
+        <div class="an">online</div>
+        <div class="aus">kein Netz</div>
+        <div class="an">wieder online</div>
+    </div>
+</div>
+</body>
+</html>

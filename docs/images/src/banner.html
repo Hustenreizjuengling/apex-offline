@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="brand.css">
+<style>
+    .canvas { width: 1280px; height: 320px; }
+    .marke { position: absolute; left: 80px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 32px; }
+    .marke svg { display: block; }
+    h1 { margin: 0; font-weight: 600; font-size: 76px; line-height: 1; letter-spacing: -.01em; color: #fff; }
+    p { margin: 14px 0 0; font-weight: 350; font-stretch: 87.5%; font-size: 25px; line-height: 1.35; color: #C9D6E2; max-width: 560px; }
+    .blatt { position: absolute; left: 872px; top: -64px; width: 336px; }
+</style>
+</head>
+<body>
+<div class="canvas raster-dunkel">
+    <div class="marke">
+        <!-- Wortmarke ohne Quadrat: auf dunklem Grund nur das Blatt -->
+        <svg width="92" height="120" viewBox="70 48 116 160" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M82 48 H174 Q186 48 186 60 V156 L134 208 H82 Q70 208 70 196 V60 Q70 48 82 48 Z" fill="#F5F8FA"/>
+            <g stroke="#16324F" stroke-linecap="round" fill="none">
+                <path d="M92 84 H164" stroke-width="10"/><path d="M92 110 H154" stroke-width="10"/>
+                <path d="M92 136 H126" stroke-width="10"/><path d="M90 176 q8 -15 16 0 t16 0" stroke-width="8"/>
+            </g>
+            <path d="M186 156 L134 208 V168 Q134 156 146 156 Z" fill="#F0A202"/>
+        </svg>
+        <div>
+            <h1>apex-offline</h1>
+            <p>Native APEX-Seiten, die ohne Netz weiterarbeiten.<br>Erfasstes geht später durch dieselbe Seite zum Server.</p>
+        </div>
+    </div>
+    <!-- Arbeitsschein als Strichzeichnung, oben angeschnitten, unten die umgeschlagene Ecke -->
+    <svg class="blatt" viewBox="0 0 336 360" xmlns="http://www.w3.org/2000/svg" font-family="Bahnschrift, sans-serif">
+        <path d="M14 2 H322 Q334 2 334 14 V276 L256 354 H14 Q2 354 2 342 V14 Q2 2 14 2 Z"
+              fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.62)" stroke-width="2"/>
+        <g fill="rgba(255,255,255,.55)" font-size="15" font-weight="400">
+            <text x="28" y="96">Auftrag</text>
+            <text x="28" y="146">Messwert</text>
+            <text x="28" y="196">Anlage</text>
+            <text x="28" y="246">Unterschrift Kunde</text>
+        </g>
+        <g fill="#fff" font-size="21" font-weight="500">
+            <text x="150" y="96">A-1005</text>
+            <text x="150" y="146">42,5</text>
+            <text x="150" y="196">ANL-7731</text>
+        </g>
+        <g stroke="rgba(255,255,255,.28)" stroke-width="1.5">
+            <path d="M28 110 H306"/><path d="M28 160 H306"/><path d="M28 210 H306"/>
+        </g>
+        <path d="M32 306 c8 -28 20 -40 24 -26 c3 12 -12 34 -4 36 c9 2 15 -30 24 -28 c7 2 -1 24 8 24 c9 0 13 -18 21 -16 c7 2 3 13 12 11 c11 -3 22 -10 44 -8"
+              fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M334 276 L256 354 V296 Q256 276 276 276 Z" fill="#F0A202"/>
+    </svg>
+</div>
+</body>
+</html>

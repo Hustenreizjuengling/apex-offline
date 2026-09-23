@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="apex-offline">
+  <title>apex-offline</title>
+  <rect width="256" height="256" rx="56" fill="#16324F"/>
+  <!-- Arbeitsschein mit umgeschlagener Ecke: vorgemerkt, wartet auf die Übertragung -->
+  <path d="M82 48 H174 Q186 48 186 60 V156 L134 208 H82 Q70 208 70 196 V60 Q70 48 82 48 Z" fill="#F5F8FA"/>
+  <g stroke="#16324F" stroke-linecap="round" fill="none">
+    <path d="M92 84 H164" stroke-width="10"/>
+    <path d="M92 110 H154" stroke-width="10"/>
+    <path d="M92 136 H126" stroke-width="10"/>
+    <path d="M90 176 q8 -15 16 0 t16 0" stroke-width="8"/>
+  </g>
+  <path d="M186 156 L134 208 V168 Q134 156 146 156 Z" fill="#F0A202"/>
+</svg>

@@ -1,0 +1,33 @@
+/* Gemeinsame Gestaltung der README-Bilder (gerendert mit render.js) */
+:root {
+    --tinte: #16324F;       /* Blau der Formulare, Grundfarbe */
+    --tinte-hell: #2B4E70;
+    --papier: #F5F8FA;
+    --raster: #D8E2EA;      /* Millimeterpapier auf hellem Grund */
+    --bernstein: #F0A202;   /* offline erfasst, wartet auf die Übertragung (wie in der App) */
+    --online: #1E7D3C;
+    --offline: #B3261E;
+    --text: #22384D;
+    --text-leise: #5B6F82;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Bahnschrift, "DIN Alternate", "Segoe UI", sans-serif; color: var(--text); }
+.canvas { position: relative; overflow: hidden; }
+.raster-hell {
+    background-color: var(--papier);
+    background-image:
+        linear-gradient(var(--raster) 1px, transparent 1px),
+        linear-gradient(90deg, var(--raster) 1px, transparent 1px),
+        linear-gradient(rgba(216, 226, 234, .45) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(216, 226, 234, .45) 1px, transparent 1px);
+    background-size: 80px 80px, 80px 80px, 16px 16px, 16px 16px;
+}
+.raster-dunkel {
+    background-color: var(--tinte);
+    background-image:
+        linear-gradient(rgba(255, 255, 255, .09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .09) 1px, transparent 1px),
+        linear-gradient(rgba(255, 255, 255, .04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .04) 1px, transparent 1px);
+    background-size: 80px 80px, 80px 80px, 16px 16px, 16px 16px;
+}
