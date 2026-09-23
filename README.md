@@ -208,6 +208,20 @@ SQL> apex import -input apex_toolkit -workspace <workspace>   -- App 1700, Alias
 
 Aufruf: `https://<server>/ords/r/<workspace>/erfassung`. Rückbau: App löschen, `@sql/uninstall.sql`.
 
+## Checksum-Salt
+
+`application.apx` enthält bewusst **kein** Checksum-Salt (Session State Protection). Ohne Eintrag
+berechnet APEX die Prüfsummen mit einem Wert der eigenen Instanz, der in keinem Export auftaucht. Ein
+öffentliches Repo verrät also nichts, und die Prüfsummen bleiben über jeden Import hinweg gleich – wichtig
+für die Links in offline gespeicherten Seiten und Entwürfen.
+
+* Kein Salt in `application.apx` eintragen, solange das Repo öffentlich ist.
+* Wer ein eigenes Salt will, setzt es im Builder in den Sicherheitsattributen der App (Session State
+  Protection) und checkt es nirgends ein. Ein späterer Import aus diesem Repo entfernt es wieder.
+* Jede Änderung des Salts macht alle Links mit Prüfsumme ungültig – auch die in offline gespeicherten
+  Seiten und Entwürfen. Vorher alle Geräte übertragen lassen.
+* Stände bis 1.6.0 enthielten ein Salt. Es ist öffentlich und darf nicht verwendet werden.
+
 ## Test
 
 `tests/offline.test.js` spielt den Außendienst im echten Browser (Playwright, Chromium) gegen eine
@@ -223,3 +237,8 @@ OE_URL=https://<server>/ords/r/<workspace>/erfassung OE_USER=<benutzer> OE_PASSW
 ```
 
 Der Test legt Aufträge und Fotos an (Kennung `T…` im Titel) und ändert die fünf Beispielaufträge.
+
+## Lizenz
+
+MIT, siehe [LICENSE](LICENSE). Der mitgelieferte Barcode-Decoder steht unter MIT bzw. Apache-2.0, siehe
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

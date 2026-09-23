@@ -1,6 +1,6 @@
 app ERFASSUNG (
     name: Offline-Erfassung
-    version: 1.6.0
+    version: 1.6.1
     logo {
         type: text
         text: Offline-Erfassung
@@ -52,9 +52,6 @@ app ERFASSUNG (
     security {
         deepLinking: true
         embedInFrames: allowSameOrigin
-    }
-    sessionStateProtection {
-        checksumSalt: 7C31A9E05B6D48F2A1C3E5D7F9B2A4C6E8D0F1A3B5C7D9E1F3A5B7C9D1E3F5A7
     }
     sessionManagement {
         rejoinSessions: allSessions
