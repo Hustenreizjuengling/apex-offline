@@ -12,6 +12,7 @@ const SCOPE = new URL(self.registration.scope);
 const CACHE = "offline-pages:" + SCOPE.pathname;                          // gleicher Name in offline.js
 const VOLATILE = ["session", "cs", "clear", "success_msg", "tz", "debug"]; // gleiche Liste in offline.js
 const TIMEOUT = 4000;                                                    // danach die gespeicherte Fassung
+const PATIENT = 30000;     // Übertragungsseite und Dialoge (iframe) warten länger auf einen langsamen Server
 
 const OFFLINE_PAGE = '<!doctype html><html lang="de"><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Keine Verbindung</title>'
@@ -44,8 +45,8 @@ async function fromCache(key, isPage) {
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
-async function networkFirst(key, network, isPage) {
-    const response = await Promise.race([network, new Promise(r => setTimeout(r, TIMEOUT))]).catch(() => null);
+async function networkFirst(key, network, isPage, wait) {
+    const response = await Promise.race([network, new Promise(r => setTimeout(r, wait))]).catch(() => null);
     if (response && response.status < 500) { return response; }
     return (await fromCache(key, isPage)) || response || network.catch(() =>
         isPage ? new Response(OFFLINE_PAGE, { headers: { "Content-Type": "text/html; charset=utf-8" } }) : Response.error());
@@ -62,7 +63,7 @@ self.addEventListener("fetch", event => {
     const key = pageKey(request.url);
     const network = fetch(request);
     event.waitUntil(network.then(r => remember(key, r.clone(), isPage)).catch(() => {}));
-    event.respondWith(networkFirst(key, network, isPage));
+    event.respondWith(networkFirst(key, network, isPage, request.destination === "iframe" ? PATIENT : TIMEOUT));
 });
 
 const swHooks = {

@@ -4,6 +4,8 @@
  * Die App wird ganz normal im APEX Builder gebaut. Diese Datei (app-weit eingebunden) ergänzt:
  *   1. Absenden ohne Verbindung: Auf Seiten mit der CSS-Klasse offline-form werden die geänderten
  *      Seitenelemente als Entwurf im Browser gespeichert (IndexedDB), statt verloren zu gehen.
+ *      Mit der zusätzlichen Klasse offline-queue legt Speichern immer erst einen Entwurf an, auch online,
+ *      und überträgt ihn im Hintergrund (für Seiten, deren Prozess doppelt Gesendetes erkennt, z. B. Fotos).
  *   2. Übertragen: Sobald der Server erreichbar ist, wird jeder Entwurf durch DIESELBE Seite
  *      abgesendet - unsichtbar geladen, Werte gesetzt, apex.page.submit. Es laufen also genau die
  *      Validierungen und Prozesse aus dem Builder. Kein eigenes Server-API, kein Feldvertrag.
@@ -42,7 +44,13 @@
     let lastRequest = "";
     let capturing = false;
     let syncing = false;
+    let transmitting = false; // ein Entwurf ist gerade unterwegs (Anzeige "sendet")
     let stocking = false;
+    let needLogin = false;   // Übertragung traf auf die Anmeldeseite: erst nach der Anmeldung erneut versuchen
+    let nextTry = 0;         // frühester nächster Versuch der 30-Sekunden-Prüfung für wartende Entwürfe
+    let bypass = false;      // einmal ohne Entwurf absenden (Entwurf ließ sich nicht speichern)
+    let bypassed = false;
+    let pickedAt = 0;        // zuletzt Kamera, Galerie oder Scanner geöffnet
 
     /* ---------- Hilfen ---------- */
 
@@ -51,6 +59,12 @@
     const isDelete = request => /DELETE/i.test(request || "");
     const saves = request => !!request && !apex.item(request).node;         // Enter- oder Auswahllisten-Submit speichert nicht
     const isForm = () => document.body.classList.contains("offline-form");   // Page > Appearance > CSS Classes
+    const queued = () => document.body.classList.contains("offline-queue");  // Speichern legt immer erst einen Entwurf an
+    const unsure = d => d.create && !d.resend ? "unklar" : "wartet";        // resend: die Seite erkennt doppelt Gesendetes
+    const allowance = chars => 30000 + chars / 4;                           // Zeitlimit wächst mit der Datenmenge (ab ca. 32 kbit/s)
+    // Neu laden nur, wenn dabei nichts verloren geht: nichts geändert, kein Dialog, Kamera oder Scanner, sichtbar
+    const canReload = () => !apex.page.isChanged() && !document.querySelector(".ui-dialog--apex, .offline-scan-overlay")
+        && document.visibilityState === "visible" && Date.now() - pickedAt > 120000;
 
     function pageKey(href) {                      // eine Seite = Pfad + fachliche Parameter
         const url = new URL(href, location.href);
@@ -93,6 +107,17 @@
         .then(list => list.filter(d => d.user === env.APP_USER).sort((a, b) => a.ts - b.ts));
     const putDraft = d => store("readwrite", s => s.put(d));
     const deleteDraft = id => store("readwrite", s => s.delete(id));
+    // Entwurf nach dem Senden ändern (change) oder löschen - aber nur, wenn er inzwischen nicht neu gespeichert wurde
+    // (zweiter Tab, erneut geöffnet): dann gewinnt die neuere Fassung und geht beim nächsten Mal raus. Liefert true/false.
+    const settle = (d, change) => store("readwrite", s => {
+        const req = s.get(d.id);
+        req.onsuccess = () => {
+            const cur = req.result;
+            if (!cur || cur.ts !== d.ts) { return; }
+            if (change) { s.put({ ...cur, ...change }); } else { s.delete(d.id); }
+        };
+        return { get result() { return !!req.result && req.result.ts === d.ts; } };
+    });
 
     /* ---------- Seitenelemente lesen und setzen ---------- */
 
@@ -151,24 +176,32 @@
                 create,
                 items,
                 ts: Date.now(),
-                // Verbindung brach beim Speichern ab: vielleicht ist der Datensatz schon angelegt
-                status: (uncertain && create) || (draft && draft.status === "unklar") ? "unklar" : "wartet",
+                // Verbindung brach beim Speichern ab: vielleicht ist der Datensatz schon angelegt. Seiten mit
+                // offline-queue erkennen doppelt Gesendetes - dort wird einfach erneut gesendet.
+                status: queued() ? "wartet" : (uncertain && create) || (draft && draft.status === "unklar") ? "unklar" : "wartet",
+                resend: queued() || !!(draft && draft.resend),
                 info: ""
             });
         } catch (e) {
             capturing = false;
+            if (online && !IS_COPY && queued() && !bypassed) {   // Warteschlange nicht nutzbar: direkt senden wie sonst auch
+                bypass = bypassed = true;
+                apex.page.submit({ request, reloadOnSubmit: "S" });
+                return;
+            }
             apex.message.alert("Nicht lokal gespeichert (" + (e && e.name) + "). Bitte die Seite offen lassen.");
             return;
         }
         if (navigator.storage && navigator.storage.persist) { navigator.storage.persist(); }
         apex.page.cancelWarnOnUnsavedChanges();
-        leave("Offline gespeichert – wird automatisch übertragen.");
+        leave(online && !IS_COPY ? "Gespeichert – wird im Hintergrund übertragen." : "Offline gespeichert – wird automatisch übertragen.");
     }
 
     function leave(text) {                        // wie der übliche Verzweig nach dem Speichern
         const dialog = window.frameElement && /^apex_dialog_/.test((window.frameElement.parentElement || {}).id || "");
         if (dialog) {
             window.parent.apex.message.showPageSuccess(text);
+            window.parent.dispatchEvent(new Event("offline-drafts"));   // Hauptseite überträgt
             apex.navigation.dialog.close(true);
             return;
         }
@@ -182,7 +215,8 @@
         lastRequest = request || "";
         const reload = document.getElementById("pReloadOnSubmit");
         if (reload) { reload.value = "S"; }       // Ergebnis per Ajax, damit ein Abbruch erkannt wird
-        if (online && !IS_COPY) { return; }       // normaler Weg: APEX sendet selbst
+        if (bypass) { bypass = false; return; }   // Entwurf ließ sich nicht speichern: APEX sendet selbst
+        if (online && !IS_COPY && !(queued() && saves(lastRequest))) { return; }   // normaler Weg: APEX sendet selbst
         apex.event.gCancelFlag = true;            // Absenden abbrechen (einziger APEX-Mechanismus)
         if (!saves(lastRequest)) { say("Ohne Verbindung nicht möglich."); return; }
         if (isDelete(lastRequest) || apex.page.validate()) { saveOffline(lastRequest, false); }
@@ -192,16 +226,20 @@
     // nach Minuten). Dann als Entwurf sichern; ist der Server erreichbar, einfach erneut speichern.
     // 502-504: Proxy oder ORDS erreichbar, Datenbank nicht - ebenfalls als Entwurf sichern.
     const unreachable = xhr => xhr.status === 0 || xhr.status >= 502;
-    apex.jQuery.ajaxPrefilter(o => { if (isForm() && /wwv_flow\.accept/.test(o.url || "") && !o.timeout) { o.timeout = 30000; } });
+    apex.jQuery.ajaxPrefilter(o => {              // o.data ist hier schon der fertige Text
+        if (isForm() && /wwv_flow\.accept/.test(o.url || "") && !o.timeout) { o.timeout = allowance(String(o.data || "").length); }
+    });
 
-    async function onSubmitLost(status) {
-        if (!status && await check()) { say("Übertragung unterbrochen – bitte erneut speichern."); return; }
+    async function onSubmitLost(status, timedOut) {
+        // Server erreichbar und Anfrage nicht angekommen: einfach erneut speichern. Nach einer Zeitüberschreitung
+        // kann er aber schon gespeichert haben - dann als Entwurf sichern (Neuanlage ohne offline-queue: "unklar").
+        if (!status && !timedOut && await check()) { say("Übertragung unterbrochen – bitte erneut speichern."); return; }
         if (isDelete(lastRequest) || apex.page.validate()) { saveOffline(lastRequest, true); }
     }
 
     $(document).on("ajaxComplete", (event, xhr, settings) => {
         if (!/wwv_flow\.accept/.test(settings.url || "") || !isForm()) { return; }
-        if (unreachable(xhr)) { onSubmitLost(xhr.status); return; }
+        if (unreachable(xhr)) { onSubmitLost(xhr.status, xhr.statusText === "timeout"); return; }
         // Online erfolgreich gespeichert: angewendeten Entwurf beim nächsten Seitenaufbau löschen
         if (draft && saves(lastRequest) && xhr.responseJSON && xhr.responseJSON.redirectURL) { sessionStorage.setItem("offline-done", draft.id); }
     });
@@ -212,7 +250,7 @@
         const wanted = new URLSearchParams(location.hash.slice(1)).get("offline-draft");
         const key = pageKey(location.href);
         const list = await allDrafts();
-        draft = list.find(d => d.id === wanted) || list.find(d => !d.create && d.key === key) || null;
+        draft = list.find(d => d.id === wanted) || list.find(d => !d.create && d.key === key && d.status !== "sendet") || null;
         if (!draft) { return; }
         const result = applyDraft(window, draft, false);
         if (result.already && !IS_COPY) {         // steht bereits so auf dem Server
@@ -241,21 +279,26 @@
                 const d = await store("readonly", s => s.get(id));   // frisch lesen: inzwischen verworfen?
                 if (!d) { continue; }
                 if (d.status === "sendet") {      // beim letzten Mal mitten im Absenden abgebrochen: Ausgang unbekannt
-                    d.status = d.create ? "unklar" : "wartet";
-                    await putDraft(d);
+                    d.status = unsure(d);
+                    await settle(d, { status: d.status });
                 }
                 if (d.status !== "wartet" || (draft && d.id === draft.id)) { continue; }
+                transmitting = true;
+                refresh();
                 const result = await replay(d);
+                if (result.status === "neu") { continue; }   // inzwischen neu gespeichert: nächste Runde
                 if (result.status === "ok") {
-                    await deleteDraft(d.id);
+                    await settle(d);
                     sent++;
                     // gespeicherte Fassungen auffrischen: die Seite selbst und das Ziel nach dem Speichern
                     [liveUrl(d.url), result.info].filter(u => u && new URL(u, document.baseURI).href.startsWith(location.origin + BASE))
                         .forEach(u => fetch(new URL(u, document.baseURI).href, { headers: { "x-offline-prefetch": "1" } }).catch(() => {}));
                 } else {
-                    await putDraft({ ...d, status: result.status, info: result.info });
+                    await settle(d, { status: result.status, info: result.info, resend: result.resend });
+                    if (result.info === "Anmeldung erforderlich") { needLogin = true; }
                     if (result.status === "wartet") { break; } // Anmeldung oder Verbindung fehlt: später erneut
                 }
+                refresh();                        // die Zahl offener Entwürfe sinkt sichtbar
             }
         };
         try {
@@ -265,33 +308,37 @@
                 await run();
             }
         } finally {
-            syncing = false;
+            syncing = transmitting = false;
             refresh();
         }
         if (sent) {
-            const text = sent === 1 ? "1 Offline-Erfassung übertragen." : sent + " Offline-Erfassungen übertragen.";
-            // neu laden zeigt den aktuellen Stand - nicht, solange etwas bearbeitet wird oder ein Dialog offen ist
-            if (apex.page.isChanged() || document.querySelector(".ui-dialog--apex")) {
-                say(text);
-            } else {
+            const text = sent === 1 ? "1 Erfassung übertragen." : sent + " Erfassungen übertragen.";
+            // neu laden zeigt den aktuellen Stand - nicht, wenn dabei etwas verloren ginge
+            if (canReload()) {
                 sessionStorage.setItem("offline-flash", text);
                 location.reload();
+            } else {
+                say(text);
             }
         }
+    }
+
+    function resume() {                           // wartende Entwürfe senden, außer es fehlt die Anmeldung
+        if (!needLogin) { sync(); }
     }
 
     function replay(d) {
         return new Promise(resolve => {
             const frame = document.createElement("iframe");
-            let done = false, submitted = false, loadedAt = 0;
+            let done = false, submitted = false, loadedAt = 0, sending = d, timer = 0;
             const finish = (status, info = "") => {
                 if (done) { return; }
                 done = true;
                 clearTimeout(timer);
                 frame.remove();
-                resolve({ status, info });
+                resolve({ status, info, resend: !!sending.resend });
             };
-            const timer = setTimeout(() => finish(submitted && d.create ? "unklar" : "wartet", "Keine Antwort vom Server"), 60000);
+            timer = setTimeout(() => finish("wartet", "Keine Antwort vom Server"), 60000);   // Seite lädt nicht
             const poll = () => {
                 if (done) { return; }
                 let w;
@@ -307,8 +354,16 @@
                         ? finish("wartet", "Anmeldung erforderlich")
                         : finish("fehler", "Seite nicht aufrufbar (" + w.document.title + ")");
                 }
-                // "sendet" erst unmittelbar vor dem Absenden: nur dieser Moment macht den Ausgang unklar
-                return putDraft({ ...d, status: "sendet" }).then(() => { if (!done) { submitted = submitIn(w, d, finish); } });
+                // "sendet" erst unmittelbar vor dem Absenden: nur dieser Moment macht den Ausgang unklar.
+                // Die aktuelle Seite entscheidet, ob sie doppelt Gesendetes erkennt (auch für ältere Entwürfe).
+                sending = { ...d, status: "sendet", resend: !!d.resend || w.document.body.classList.contains("offline-queue") };
+                return settle(d, { status: "sendet", resend: sending.resend }).then(current => {
+                    if (!current) { return finish("neu"); }
+                    if (done) { return; }
+                    clearTimeout(timer);          // ab jetzt zählt die Zeit fürs Absenden, je nach Datenmenge
+                    timer = setTimeout(() => finish(unsure(sending), "Keine Antwort vom Server"), allowance(JSON.stringify(d.items).length));
+                    submitted = submitIn(w, sending, finish);
+                });
             };
             frame.name = "offline-sync";
             frame.style.display = "none";
@@ -340,7 +395,7 @@
                 setTimeout(() => finish("fehler", text));
             };
             a.jQuery(w.document).on("ajaxComplete", (event, xhr) => {
-                if (unreachable(xhr)) { finish(d.create ? "unklar" : "wartet", "Server nicht erreichbar (" + xhr.status + ")"); }
+                if (unreachable(xhr)) { finish(unsure(d), "Server nicht erreichbar (" + xhr.status + ")"); }
             });
             a.page.submit({ request: d.request, reloadOnSubmit: "S" });
             return true;
@@ -366,7 +421,7 @@
             refresh();
             // gespeicherte Fassung einer Seite nur für online: jetzt den aktuellen Inhalt laden
             if (ok && IS_COPY && document.body.classList.contains("online-only")) { location.reload(); return ok; }
-            if (ok) { sync(); }
+            if (ok) { resume(); }
         }
         return ok;
     }
@@ -382,10 +437,14 @@
         document.documentElement.classList.toggle("offline-mode", !online);   // für Seiten mit online-only
         const list = await allDrafts();
         const keys = new Set(list.filter(d => !d.create).map(d => d.key));
+        const parts = [online ? "Online" : "Offline"];
+        if (list.length) { parts.push(list.length + " offen"); }
+        if (online && transmitting) { parts.push("sendet"); } else if (online && stocking) { parts.push("lädt"); }
+        if (online && needLogin) { parts.push("Anmeldung nötig"); }
         pill.classList.toggle("is-offline", !online);
         pill.classList.toggle("has-drafts", list.length > 0);
-        pill.textContent = (online ? "Online" : "Offline") + (list.length ? " · " + list.length + " offen" : "")
-            + (stocking && online ? " · lädt" : "");
+        pill.textContent = parts.join(" · ");
+        pill.title = pill.textContent;
         document.querySelectorAll("a[href]").forEach(a => {
             let key = null;
             try { key = pageKey(a.href); } catch (e) { /* kein Seitenlink */ }
@@ -397,12 +456,16 @@
         const list = await allDrafts();
         const esc = apex.util.escapeHTML;
         const stored = (await (await caches.open(CACHE)).keys()).filter(r => r.url.startsWith(location.origin + BASE)).length;
+        const picture = d => Object.values(d.items).map(i => i.val)     // Vorschau für Foto-Entwürfe
+            .find(v => typeof v === "string" && /^data:image\/(jpeg|webp);base64,/.test(v));
         const dialog = document.createElement("dialog");
         dialog.className = "offline-panel";
         dialog.innerHTML = "<h2>Offline erfasst</h2>"
             + `<p class="offline-stock">Offline verfügbar: ${stored} Seiten${stocking ? " (wird geladen …)" : ""}</p>`
+            + (online && needLogin ? '<p class="offline-login">Die Sitzung ist abgelaufen. '
+                + '<button type="button" class="t-Button t-Button--hot t-Button--small" data-act="login">Anmelden und übertragen</button></p>' : "")
             + (list.length ? "<ul>" + list.map(d =>
-                `<li data-id="${esc(d.id)}"><strong>${esc(d.title)}</strong> <small>${new Date(d.ts).toLocaleString()}</small>`
+                `<li data-id="${esc(d.id)}"><img class="offline-thumb" alt="" hidden><strong>${esc(d.title)}</strong> <small>${new Date(d.ts).toLocaleString()}</small>`
                 + `<div class="is-${esc(d.status)}">${esc(d.status)}${d.info ? ": " + esc(d.info) : ""}`
                 + (d.status === "unklar" ? " - bitte prüfen, ob er schon angelegt ist" : "") + "</div>"
                 + '<button type="button" class="t-Button t-Button--small" data-act="open">Öffnen</button> '
@@ -410,9 +473,16 @@
               : "<p>Keine offenen Erfassungen.</p>")
             + '<p><button type="button" class="t-Button t-Button--hot" data-act="sync">Jetzt übertragen</button> '
             + '<button type="button" class="t-Button" data-act="close">Schließen</button></p>';
+        dialog.querySelectorAll("li[data-id]").forEach(li => {
+            const src = picture(list.find(x => x.id === li.dataset.id));
+            if (src) { const img = li.querySelector(".offline-thumb"); img.src = src; img.hidden = false; }
+        });
         dialog.addEventListener("click", async event => {
             const act = (event.target.closest("[data-act]") || { dataset: {} }).dataset.act;
             const d = list.find(x => x.id === (event.target.closest("li") || { dataset: {} }).dataset.id);
+            if (act === "login") {                // APEX zeigt die Anmeldung und kehrt danach hierher zurück
+                location.href = liveUrl(location.href);
+            }
             if (act === "open") {
                 const url = liveUrl(d.url) + "#offline-draft=" + encodeURIComponent(d.id);
                 location.href = url;
@@ -428,6 +498,7 @@
                 dialog.close();
                 await Promise.all(list.filter(x => x.status === "fehler" || x.status === "konflikt")
                     .map(x => putDraft({ ...x, status: "wartet", info: "" })));
+                needLogin = false;
                 if (await check()) { sync(); } else { say("Server nicht erreichbar."); }
             }
             if (act === "close") { dialog.close(); }
@@ -505,7 +576,9 @@
             img.hidden = !/^data:image\//.test(value || "");
             if (!img.hidden) { img.src = value; }
         };
+        file.addEventListener("click", () => { pickedAt = Date.now(); });   // Kamera offen: nicht neu laden
         file.addEventListener("change", async () => {   // das Datei-Feld hat keinen Namen: APEX überträgt es nie selbst
+            pickedAt = Date.now();
             const chosen = file.files[0];
             file.value = "";
             if (!chosen) { return; }
@@ -544,7 +617,7 @@
         button.title = "Scannen";
         button.innerHTML = '<span class="fa fa-barcode" aria-hidden="true"></span>';
         input.after(button);
-        button.addEventListener("click", () => scan().then(
+        button.addEventListener("click", () => (pickedAt = Date.now(), scan()).then(
             value => { if (value) { apex.item(input.id).setValue(value); } },
             e => apex.message.alert(e && e.name === "NotAllowedError" ? "Kein Zugriff auf die Kamera." : "Scannen nicht möglich: " + e.message)
         ));
@@ -691,10 +764,16 @@
     });
 
     if (!IN_FRAME) {
+        const again = () => check().then(ok => { if (ok) { resume(); } });
         window.addEventListener("online", check);
         window.addEventListener("offline", check);
-        document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { check(); } });
-        window.addEventListener("pageshow", event => { if (event.persisted) { flash(); refresh(); check(); } });
-        setInterval(() => { if (document.visibilityState === "visible") { check(); } }, 30000);
+        window.addEventListener("offline-drafts", again);        // Dialog hat einen Entwurf gespeichert
+        document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { again(); } });
+        // Zurück aus dem Back/Forward-Cache (z. B. nach dem Speichern): apexreadyend läuft dann nicht
+        window.addEventListener("pageshow", event => { if (event.persisted) { flash(); refresh(); again(); } });
+        setInterval(async () => {
+            if (document.visibilityState !== "visible" || !(await check()) || syncing || needLogin || Date.now() < nextTry) { return; }
+            if ((await allDrafts()).some(d => d.status === "wartet")) { nextTry = Date.now() + 120000; sync(); }   // höchstens alle 2 Minuten
+        }, 30000);
     }
 })(window.apex, window.apex && window.apex.jQuery);

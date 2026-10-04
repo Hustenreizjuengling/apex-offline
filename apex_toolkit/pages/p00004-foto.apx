@@ -5,7 +5,10 @@ page 4 (
     appearance {
         pageTemplate: @/standard
         templateOptions: #DEFAULT#
-        cssClasses: offline-form
+        cssClasses: [
+            offline-form
+            offline-queue
+        ]
     }
     navigation {
         cursorFocus: doNotFocusCursor

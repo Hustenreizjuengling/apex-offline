@@ -20,17 +20,29 @@ function check(ok, text) { console.log((ok ? "  [OK]   " : "  [FEHLER] ") + text
 
 async function login(page) {
     await page.goto(URL_ + "/auftraege");
-    if (await page.locator("#P9999_USERNAME").count()) {
-        await page.fill("#P9999_USERNAME", USER);
-        await page.fill("#P9999_PASSWORD", PASSWORD);
-        await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Anmelden" }).click()]);
-    }
+    if (await page.locator("#P9999_USERNAME").count()) { await fillLogin(page); }
     await page.waitForSelector(".offline-status");
 }
+async function fillLogin(page) {                    // APEX-Anmeldeseite; danach zurück zur aufgerufenen Seite
+    await page.waitForSelector("#P9999_USERNAME");
+    await page.fill("#P9999_USERNAME", USER);
+    await page.fill("#P9999_PASSWORD", PASSWORD);
+    await Promise.all([page.waitForURL(url => !/\/login/.test(String(url))), page.getByRole("button", { name: "Anmelden" }).click()]);
+    await page.waitForSelector(".offline-status");
+}
+const settled = text => !/sendet|lädt/.test(text);   // Übertragung und Vorrat sind durch
 
 const pill = page => page.locator(".offline-status").innerText();
 // Ohne ?session= schickt APEX zur Anmeldung (Rejoin Sessions ist auf der Instanz nicht aktiv)
-const gotoList = async page => page.goto(URL_ + "/auftraege?session=" + await page.evaluate(() => apex.env.APP_SESSION));
+async function sessionOf(page) {                    // lädt die Seite gerade neu (z. B. nach dem Übertragen): abwarten
+    for (let i = 0; ; i++) {
+        try { await page.waitForLoadState("load"); return await page.evaluate(() => apex.env.APP_SESSION); } catch (e) {
+            if (i >= 20) { throw e; }
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+}
+const gotoList = async page => page.goto(URL_ + "/auftraege?session=" + await sessionOf(page));
 async function openOrder(page, nr) {
     await Promise.all([page.waitForURL(/auftrag\?/), page.locator("td a", { hasText: nr }).first().click()]);
     await page.waitForSelector(".offline-signature-pad canvas");
@@ -183,7 +195,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         console.log("6. Wieder online: automatische Übertragung durch die APEX-Seiten");
         await field.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
-        await waitFor(async () => /1 offen/.test(await pill(page).catch(() => "")), 60000, "Übertragung");
+        await waitFor(async () => { const t = await pill(page).catch(() => "sendet"); return /1 offen/.test(t) && settled(t); }, 60000, "Übertragung");
         check(/1 offen/.test(await pill(page)), "zwei übertragen, einer offen (Konflikt): " + await pill(page));
         const a = await serverValues(desk, "A-1001");
         check(a.status === "Erledigt" && a.befund === "Filter getauscht " + RUN, "A-1001 auf dem Server: " + a.status + " / " + a.befund);
@@ -205,7 +217,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             && await page.locator("#P2_BEFUND_error b").count() === 0, "Konflikt am Feld mit Server-Wert angezeigt (HTML als Text)");
         check(await page.inputValue("#P2_BEFUND") === "Techniker " + RUN, "Offline-Wert eingesetzt");
         await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Speichern" }).click()]);
-        await waitFor(async () => /Online$/.test((await pill(page)).trim()), 15000, "keine offenen Entwürfe");
+        await waitFor(async () => (await pill(page)).trim() === "Online", 15000, "keine offenen Entwürfe");
         check((await pill(page)).trim() === "Online", "nach dem Speichern keine Entwürfe mehr");
 
         console.log("8. Sitzung abgelaufen: offline erfassen, neu anmelden, dann Übertragung");
@@ -223,9 +235,11 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await field.clearCookies();                                 // Sitzung weg
         await field.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
-        await waitFor(async () => /Anmeldung erforderlich/.test(await drafts(page)), 30000, "Hinweis Anmeldung");
-        check(true, "Übertragung wartet auf Anmeldung");
-        await login(page);
+        await waitFor(async () => /Anmeldung nötig/.test(await pill(page).catch(() => "")), 30000, "Hinweis Anmeldung");
+        check(/Anmeldung erforderlich/.test(await drafts(page)), "Übertragung wartet auf Anmeldung, Anzeige: " + await pill(page));
+        await page.locator(".offline-status").click();
+        await page.locator(".offline-panel [data-act=login]").click();
+        await fillLogin(page);
         await waitFor(async () => (await pill(page)).trim() === "Online", 60000, "Übertragung nach Anmeldung");
         const c = await serverValues(desk, "A-1003");
         check(c.befund === "Nach Anmeldung " + RUN, "Änderung nach neuer Anmeldung übertragen (Prüfsumme je Benutzer)");
@@ -302,9 +316,14 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.fill("#P4_BEMERKUNG", "Beschädigt " + RUN);
         await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
         await waitFor(async () => /3 offen/.test(await pill(page)), 10000, "3 offen");
-        await field.setOffline(false);
-        await page.evaluate(() => window.dispatchEvent(new Event("online")));
-        await waitFor(async () => /1 offen/.test(await pill(page).catch(() => "")) && !/lädt|sendet/.test(await pill(page).catch(() => "lädt")), 90000, "Übertragung Fotos");
+        const savedDraft = await page.evaluate(async note => {     // für 11e: Entwurf, wie er auf dem Gerät lag
+            const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
+            const all = await new Promise(r => { const q = db.transaction("drafts").objectStore("drafts").getAll(); q.onsuccess = () => r(q.result); });
+            return all.find(x => x.page === "4" && x.items.P4_BEMERKUNG && x.items.P4_BEMERKUNG.val === note && !/-kopie$/.test(x.id));
+        }, "Typenschild " + RUN);
+        check(!!savedDraft && savedDraft.resend === true, "Foto-Entwurf der Seite mit offline-queue darf erneut gesendet werden");
+        await field.setOffline(false);                              // ohne "online"-Ereignis: die regelmäßige Prüfung merkt es
+        await waitFor(async () => { const t = await pill(page).catch(() => "sendet"); return /1 offen/.test(t) && settled(t); }, 120000, "Übertragung Fotos");
         const withPhoto = await serverValues(desk, RUN);
         const typenschild = withPhoto.fotos.filter(f => f.text.endsWith("Typenschild " + RUN));
         check(typenschild.length === 1 && typenschild[0].text.startsWith("[Bild 1600]"),
@@ -338,16 +357,43 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             return { chars: url.length, bytes: atob(url.split(",")[1]).length };
         });
         await page.fill("#P4_BEMERKUNG", "Groß " + RUN);
-        await Promise.all([page.waitForURL(/auftrag\?/, { timeout: 120000 }), page.getByRole("button", { name: "Speichern" }).click()]);
+        const started = Date.now();
+        await Promise.all([page.waitForURL(/auftrag\?/, { timeout: 10000 }), page.getByRole("button", { name: "Speichern" }).click()]);
+        await page.waitForSelector("text=im Hintergrund übertragen", { timeout: 5000 }).catch(() => {});
+        check(Date.now() - started < 10000, `online gespeichert und sofort zurück (${Date.now() - started} ms), Übertragung im Hintergrund`);
+        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 180000, "Übertragung großes Foto");
         const withBig = await serverValues(desk, RUN);
         const large = withBig.fotos.find(f => f.text.endsWith("Groß " + RUN));
         const largeBytes = large ? await bytesOf(desk, large.src) : 0;
         check(!!large && largeBytes === big.bytes, `großes Foto gespeichert: ${Math.round(big.chars / 1024)} KB Data-URL, ${largeBytes} von ${big.bytes} Bytes`);
 
+        console.log("11e. Abgebrochenes Senden und alter unklar-Entwurf: erneut gesendet, trotzdem nur einmal gespeichert");
+        const putBack = d => page.evaluate(async draft => {
+            const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
+            await new Promise(r => { const t = db.transaction("drafts", "readwrite"); t.objectStore("drafts").put(draft); t.oncomplete = r; });
+        }, d);
+        await gotoList(page);
+        await openOrder(page, RUN);
+        await putBack({ ...savedDraft, status: "sendet" });         // App mitten im Senden geschlossen
+        await page.reload();
+        await page.waitForSelector(".offline-status");
+        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 90000, "erneutes Senden");
+        await putBack({ ...savedDraft, id: savedDraft.id + "-alt", status: "unklar", resend: false });   // Stand vor 1.8.0
+        await page.reload();
+        await page.waitForSelector(".offline-status");
+        await page.locator(".offline-status").click();
+        check(/unklar/.test(await page.locator(".offline-panel").innerText()), "alter Foto-Entwurf steht auf unklar");
+        await Promise.all([page.waitForURL(/foto\?/), page.locator(".offline-panel li", { hasText: "unklar" }).locator("[data-act=open]").click()]);
+        await waitFor(async () => (await page.inputValue("#P4_FOTO")).startsWith("data:image/jpeg"), 10000, "Entwurf eingesetzt");
+        await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
+        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 90000, "unklar-Entwurf übertragen");
+        const again = (await serverValues(desk, RUN)).fotos.filter(f => f.text.endsWith("Typenschild " + RUN));
+        check(again.length === 1, "nach zweimal erneutem Senden weiterhin genau ein Foto „Typenschild“");
+
         console.log("12. Seite nur online (Auswertung): ohne Verbindung Hinweis statt Inhalt");
         const report = () => page.getByRole("heading", { name: "Aufträge je Status" });
         const notice = () => page.locator(".online-only-notice");
-        await page.goto(URL_ + "/auswertung?session=" + await page.evaluate(() => apex.env.APP_SESSION));
+        await page.goto(URL_ + "/auswertung?session=" + await sessionOf(page));
         await page.waitForSelector(".offline-status");
         check(await report().isVisible() && await notice().isHidden(), "online: Auswertung sichtbar");
         await field.setOffline(true);

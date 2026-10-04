@@ -7,6 +7,7 @@
 }
 .offline-status.has-drafts { background: #a15c00; }
 .offline-status.is-offline { background: #b3261e; }
+.offline-status { max-width: 70vw; overflow: hidden; text-overflow: ellipsis; }
 .offline-status-item { display: flex; align-items: center; margin-inline-end: 8px; }
 /* Seiten ohne Navigationsleiste: unten links */
 body > .offline-status { position: fixed; left: 12px; bottom: 12px; z-index: 900; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
@@ -22,6 +23,8 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 .offline-panel li { padding: 8px 0; border-bottom: 1px solid #ddd; }
 .offline-panel li div { margin: 4px 0 8px; }
 .offline-panel .is-fehler, .offline-panel .is-konflikt, .offline-panel .is-unklar { color: #b3261e; }
+.offline-panel .offline-thumb { float: right; width: 64px; height: 48px; object-fit: cover; border-radius: 4px; margin-left: 8px; }
+.offline-panel li::after { content: ""; display: block; clear: both; }
 
 /* Unterschrift */
 .offline-signature-pad { width: 100%; }

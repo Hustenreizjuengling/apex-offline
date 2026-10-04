@@ -66,6 +66,7 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
 | Primärschlüssel-Item → Security → Session State Protection | *Checksum Required – User Level* (der Formular-Assistent setzt *Session Level* – umstellen) | die Prüfsumme in Links bleibt nach neuer Anmeldung gültig |
 | Links und Buttons auf die Seite → Set Items | Primärschlüssel übergeben, bei „Neu" **leer** | ohne Item wäre die Prüfsumme an die Sitzung gebunden |
 | Buttons → Button Name | Builder-Standard behalten: `CREATE`, `SAVE`, `DELETE` | am Namen erkennt `offline.js` Neuanlage und Löschen; heißt der Anlegen-Button anders, überschreibt die nächste Offline-Neuanlage die vorige |
+| Page → Appearance → CSS Classes, zusätzlich (optional) | `offline-queue` | Speichern legt immer erst einen Entwurf an, auch online, kehrt sofort zurück und überträgt im Hintergrund; ein abgebrochenes Senden wird einfach wiederholt. Nur für Seiten, deren Prozess doppelt Gesendetes erkennt (Beispiel: Seite 4 „Foto“). Lehnt der Server ab, steht das in der Entwurfsliste (*fehler*), nicht am Feld |
 
 Alles andere bleibt wie gewohnt: Felder, Pflichtfelder, Validierungen, *Form – Automatic Row
 Processing*, Verzweigungen. Beispiel: `apex_toolkit/pages/p00002-auftrag.apx`.
@@ -148,17 +149,23 @@ Regionsquellen und PL/SQL-Anzeigen laufen wie bei einem Klick. Für Seiten im Vo
 ## Was der Anwender sieht
 
 In der Kopfleiste neben dem angemeldeten Benutzer steht der Zustand: **Online**, **Offline** oder
-**„2 offen"** (Seiten ohne Navigationsleiste zeigen ihn unten links). In Listen sind Datensätze
-mit offenem Entwurf markiert (●). Ein Klick auf die Anzeige öffnet die Liste der Entwürfe mit
-*Öffnen*, *Verwerfen* und *Jetzt übertragen*. Jeder Entwurf heißt wie die Seite plus ihr erster
-ausgefüllter Wert, z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehört also nach oben.
+**„2 offen"** (Seiten ohne Navigationsleiste zeigen ihn unten links), dazu **„sendet“** während der
+Übertragung – die Zahl offener Entwürfe sinkt dabei Entwurf für Entwurf – und **„lädt“** während des
+Offline-Vorrats. **„Anmeldung nötig“** heißt: die Sitzung ist abgelaufen, die Entwürfe warten; die Liste der
+Entwürfe hat dann den Knopf *Anmelden und übertragen*. In Listen sind Datensätze mit offenem Entwurf markiert
+(●). Ein Klick auf die Anzeige öffnet die Liste der Entwürfe mit *Öffnen*, *Verwerfen* und *Jetzt übertragen*;
+Foto-Entwürfe zeigen ein Vorschaubild. Jeder Entwurf heißt wie die Seite plus ihr erster ausgefüllter Wert,
+z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehört also nach oben.
+
+Wartende Entwürfe gehen automatisch raus: beim Laden einer Seite, sobald die Verbindung zurück ist, wenn die
+App wieder in den Vordergrund kommt und sonst spätestens alle zwei Minuten.
 
 | Status | Bedeutung |
 |---|---|
 | wartet | wird automatisch übertragen, sobald der Server erreichbar ist (ggf. nach Anmeldung) |
 | fehler | der Server hat abgelehnt (z. B. Validierung) – öffnen, korrigieren, speichern |
 | konflikt | dasselbe Feld wurde inzwischen auf dem Server geändert – öffnen, entscheiden, speichern |
-| unklar | Neuanlage, bei der die Verbindung während des Speicherns abriss – erst prüfen, ob der Datensatz schon existiert, dann öffnen oder verwerfen |
+| unklar | Neuanlage, bei der die Verbindung während des Speicherns abriss – erst prüfen, ob der Datensatz schon existiert, dann öffnen oder verwerfen. Auf Seiten mit `offline-queue` kommt das nicht vor: dort wird einfach erneut gesendet |
 
 ## Fotos am Auftrag
 
@@ -177,7 +184,10 @@ MIME-Typ speichern. Als Data-URL in einem CLOB bräuchte ein Foto das 2,7-Fache 
 
 **Doppelt gesendet zählt einmal.** Dieselben Bytes am selben Auftrag werden nur einmal gespeichert; der
 Auftrag wird dafür kurz gesperrt, eine neuere Bemerkung wird übernommen. Ein Entwurf wird byte-gleich
-gesendet. Ein Foto-Entwurf mit dem Status *unklar* lässt sich deshalb ohne Prüfung öffnen und speichern.
+gesendet. Deshalb hat Seite 4 zusätzlich die Klasse `offline-queue`: Speichern legt auch online erst einen
+Entwurf an und kehrt sofort zum Auftrag zurück, das Foto geht im Hintergrund raus. Bei schlechtem Netz wartet
+der Techniker also nicht auf den Upload, und ein abgebrochenes Senden wird einfach wiederholt. Foto-Entwürfe
+mit dem Status *unklar* aus älteren Fassungen lassen sich ohne Prüfung öffnen und speichern.
 
 **Keine Bilddaten in gespeicherten Seiten.** Seite 2 zeigt die Fotos nur als Liste (Bemerkung, Zeitpunkt,
 Benutzer), die Bilder zeigt das Protokoll (Seite 3, nur online) mit einer nativen Spalte *Display Image* auf
@@ -216,6 +226,10 @@ darstellen kann.
 * Offline funktionieren Textfelder, Auswahllisten, Optionsfelder, Schalter, Datum, Zahl, Unterschrift, Foto
   und Scan. Vorhandene Fotos erscheinen offline nur als Liste, das Protokoll nur online. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
   serverseitige Dynamic Actions, Regionen mit Lazy Loading.
+* Uploads werden je nach Datenmenge bis zu einer Datenrate von etwa 32 kbit/s abgewartet; was langsamer ist,
+  bricht ab und wird später erneut versucht. Wer während der Übertragung die Seite wechselt, startet sie neu
+  (doppelt Gesendetes erkennt der Server). Übertragen wird nur, solange die App offen ist – abends die App online
+  im Vordergrund lassen, bis „offen“ verschwindet.
 * Anmelden geht nur online. *Rejoin Sessions* wirkt auf der Instanz nicht; die installierte App startet
   online deshalb mit der Anmeldung, offline mit der gespeicherten Startseite.
 * Auf iPhone/iPad bleiben die Daten nur dauerhaft erhalten, wenn die App zum Home-Bildschirm hinzugefügt
@@ -285,8 +299,9 @@ dieses Rezept beschreibt, wie sie zur Offline-Schicht passt.
    um 7:30 Uhr sind rund 3 400 Aufrufe in wenigen Minuten; jedes Gerät lädt nacheinander, es laufen also höchstens
    etwa 200 Anfragen gleichzeitig. Den ORDS-Verbindungspool (`jdbc.MaxLimit`) danach bemessen.
 7. **Am Gerät.** Offline gehen, wenn die Anzeige nicht mehr „lädt“ zeigt. Neue Aufträge im Lauf des Tages: Liste
-   online öffnen. Abends die App online öffnen und im Vordergrund lassen, bis „offen“ verschwindet. Geräte, die
-   sich mehrere teilen: vor der Übergabe alles übertragen (Entwürfe gehören ihrem Ersteller).
+   online öffnen. Abends die App online öffnen und im Vordergrund lassen, bis „offen“ verschwindet; steht dort
+   „Anmeldung nötig“, in der Liste der Entwürfe *Anmelden und übertragen* tippen. Geräte, die sich mehrere teilen:
+   vor der Übergabe alles übertragen (Entwürfe gehören ihrem Ersteller).
 8. **Gleiche Herkunft.** `#APEX_FILES#` muss vom eigenen Server kommen, nicht von einem CDN: die
    Erreichbarkeitsprüfung fragt dort nach.
 
@@ -344,6 +359,7 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 | Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
 | generierte `sw.js`: lädt die Hook-Datei per `importScripts` vor dem eigenen `fetch`-Listener; Hook `FUNCTION_VARIABLE_DECLARATION` mit `apex.sw.cleanAppCaches/cleanAPEXCaches`; `/i/` und `<app>/files/static/v…` aus dem eigenen Cache, alle anderen GET-Anfragen offline mit leerer Antwort | Seitenspeicher vor dem von APEX; alte Dateien behalten | 0, 1, 2, 9 |
 | Textdateien `wwv_flow.js_messages` / `js_dialogs` | gespeicherte Seiten offline vollständig | 2 |
+| `request.destination === "iframe"` im Service Worker (Übertragungsseite, APEX-Dialoge) | diese warten bis zu 30 s auf den Server statt 4 s | 6, 11 |
 | `#APEX_FILES#apex_version.txt` auf derselben Herkunft | Erreichbarkeitsprüfung (HEAD) | 2, 6 |
 | Parameter der Friendly URLs `session cs clear success_msg tz debug request` | Schlüssel gespeicherter Seiten, Aufruf mit der aktuellen Sitzung | 1–8 |
 | Prüfsummen auf Benutzerebene sind über Sitzungen gleich; Deep Linking; *Rejoin Sessions* wirkt nicht | Entwürfe überstehen eine neue Anmeldung | 8 |
