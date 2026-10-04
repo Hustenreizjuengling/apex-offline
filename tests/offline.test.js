@@ -84,8 +84,28 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
     if (process.env.OE_DEBUG) { page.on("framenavigated", f => { if (f !== page.mainFrame()) { console.log("           iframe: " + f.url().replace(URL_, "")); } }); }
 
     try {
-        console.log("1. Online nur anmelden: der Offline-Vorrat lädt alle Seiten im Hintergrund");
+        console.log("0. APEX-Interna, auf die offline.js sich verlässt (README: Woran die Schicht in APEX hängt)");
         await login(page);                                          // erster Aufruf überhaupt, nichts weiter öffnen
+        const internals = await page.evaluate(async () => {
+            const missing = [];
+            const need = (ok, what) => { if (!ok) { missing.push(what); } };
+            need(typeof apex.page.forEachPageItem === "function", "apex.page.forEachPageItem");
+            need("gCancelFlag" in apex.event, "apex.event.gCancelFlag");
+            need(typeof apex.navigation.redirect === "function", "apex.navigation.redirect");
+            need(typeof apex.message.showErrors === "function", "apex.message.showErrors");
+            need(!!document.getElementById("wwvFlowForm"), "#wwvFlowForm");
+            need(!!document.getElementById("pReloadOnSubmit"), "#pReloadOnSubmit");
+            need(!!document.querySelector(".t-NavigationBar"), "Universal Theme .t-NavigationBar");
+            const sw = await navigator.serviceWorker.ready;
+            const source = await (await fetch(sw.active.scriptURL)).text();
+            const hook = source.indexOf("offline-sw.js"), listener = source.search(/addEventListener\(\s*["']fetch/);
+            need(hook >= 0 && listener > hook, "sw.js lädt den Hook vor dem eigenen fetch-Listener");
+            need(/FUNCTION_VARIABLE_DECLARATION/.test(source) && /cleanAppCaches/.test(source), "sw.js: Hook FUNCTION_VARIABLE_DECLARATION, apex.sw.cleanAppCaches");
+            return missing;
+        });
+        check(internals.length === 0, "APEX-Interna vorhanden" + (internals.length ? " – geändert: " + internals.join(", ") : ""));
+
+        console.log("1. Online nur anmelden: der Offline-Vorrat lädt alle Seiten im Hintergrund");
         const orders = await page.locator(".offline-prefetch td a", { hasText: /^A-\d+|^T/ }).count();
         const cachedPages = () => page.evaluate(async () => {
             const name = (await caches.keys()).find(n => n.startsWith("offline-pages:"));

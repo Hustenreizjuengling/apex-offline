@@ -118,8 +118,32 @@ Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
 
 Damit eine Seite zum Vorrat gehört, muss sie also im Menü stehen oder von einer `offline-prefetch`-Region
 aus verlinkt sein. Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
-Links auf modale Dialoge und fremde Apps. Höchstens 300 Seiten je Durchlauf; große Bestände deshalb in der
-Liste auf die eigenen Datensätze filtern (z. B. `where techniker = :APP_USER`).
+Links auf modale Dialoge und fremde Apps. Höchstens 300 Seiten je Durchlauf.
+
+Die Liste in der `offline-prefetch`-Region muss deshalb **auf die eigenen Datensätze gefiltert** sein
+(z. B. `where techniker = :APP_USER` und der heutige Tag, siehe [Außendienst](#außendienst-disposition-und-techniker)).
+Sie muss ein **Classic Report** oder eine Template Component sein: Cards baut der Browser erst aus JSON
+zusammen, der Vorrat findet darin keine Links. Und sie muss alle Zeilen auf einmal zeigen (*Number of Rows*
+mindestens so groß wie der größte Tagesbestand, Standard ist 15): der Vorrat sieht nur angezeigte Zeilen.
+
+## Seiten im Offline-Vorrat
+
+Der Vorrat ruft jede Seite vollständig auf dem Server auf: *Before Header*-Prozesse, Berechnungen,
+Regionsquellen und PL/SQL-Anzeigen laufen wie bei einem Klick. Für Seiten im Vorrat gilt deshalb:
+
+1. **Beim Seitenaufbau nichts schreiben:** keine Lesemarkierung („angenommen“), kein Zugriffsprotokoll, keine
+   Sperren.
+2. **Keine Nummern beim Seitenaufbau vergeben:** jede Offline-Neuanlage aus derselben gespeicherten Seite
+   bekäme dieselbe Nummer. Nummern im Speichern-Prozess vergeben.
+3. **Links mit Nebenwirkung** bekommen einen Request (der Vorrat überspringt sie) oder stehen außerhalb von
+   `offline-prefetch`-Regionen.
+4. **Verzweigungen vor dem Seitenaufbau** (*Before Header Branch*): gespeichert wird die Zielseite unter der
+   aufgerufenen Adresse.
+5. **Session State:** nach dem Vorrat enthält er den zuletzt geladenen Datensatz. Schlüssel deshalb in Links
+   übergeben (wie die Beispiel-App), Ajax-Aktualisierungen und serverseitigen Dynamic Actions die Items unter
+   *Page Items to Submit* mitgeben, Application Items nicht als Datensatz-Kontext verwenden.
+6. **Bedingungen sind eingefroren:** Serverseitige Bedingungen, die vom Zustand des Datensatzes abhängen,
+   gelten in der gespeicherten Seite so, wie sie beim Laden waren.
 
 ## Was der Anwender sieht
 
@@ -173,6 +197,70 @@ keine Data-URLs über 4000 Zeichen darstellen kann. Offline erfasste Daten ersch
   offline nicht nutzbar. Abmelden löscht bewusst nichts. Schutz der Daten auf dem Gerät ist die
   Gerätesperre (PIN, Face ID) und die Geräteverwaltung, nicht die App.
 
+## Außendienst: Disposition und Techniker
+
+So sieht der Einsatz aus, für den die Schicht gebaut ist: Im Büro werden Aufträge den Technikern für einen Tag
+zugewiesen. Der Techniker meldet sich morgens online an, sein Gerät lädt seine Aufträge des Tages, er arbeitet
+offline und überträgt, sobald er wieder Verbindung hat. Zuweisung und Fachregeln gehören in die Fachanwendung;
+dieses Rezept beschreibt, wie sie zur Offline-Schicht passt.
+
+1. **Zwei Apps auf denselben Tabellen.** Die Disposition ist eine normale APEX-App ohne `offline.js` und ohne
+   Service-Worker-Hook, mit eigenem Release. In einer gemeinsamen App bekämen Büro-Anwender Vorrat,
+   Seitenspeicher, Statusanzeige und Erreichbarkeitsprüfung mit; Speichern im Interactive Grid wird ohnehin nicht
+   abgefangen. Die Konflikterkennung je Feld wirkt unabhängig davon, welche App den Datensatz geändert hat. Muss
+   es eine App sein: Autorisierung auf die Dispositionsseiten, Page-CSS-Klasse `online-only`, dort keine
+   `offline-prefetch`-Regionen.
+2. **Die Tagesliste ist Pflicht.** Die Liste des Technikers zeigt nur seine Aufträge, zum Beispiel:
+
+   ```sql
+   select id, nr, titel, kunde, ort, termin, status
+     from xx_auftrag
+    where techniker = :APP_USER
+      and (termin >= trunc(sysdate) and termin < trunc(sysdate) + 1
+           or termin < trunc(sysdate) and status <> 'ERLEDIGT')
+    order by termin
+   ```
+
+   Classic Report, *Number of Rows* über dem größten Tagesbestand, Termin in der Liste anzeigen (siehe
+   [Offline-Vorrat](#offline-vorrat-was-ohne-vorheriges-öffnen-offline-verfügbar-ist)). Kommen die Aufträge aus
+   der Disposition, braucht die Liste keinen Button „Neuer Auftrag“: Neuanlagen sind neben Fotos die einzige
+   Quelle für den Status *unklar*.
+3. **Vorrat schlank halten.** `offline-prefetch` nur dort, wo Auftragslink und Foto-Button stehen. Protokoll- und
+   Auswertungsseiten sind `online-only`; außerhalb von `offline-prefetch`-Regionen verlinkt, kosten sie keinen
+   Aufruf beim Laden.
+4. **Umverteilte und stornierte Aufträge prüfen.** Die Übertragung vergleicht nur die Felder, die der Techniker
+   geändert hat. Eine Umverteilung oder Stornierung sieht sie nicht und würde die Arbeit auf diesen Auftrag
+   speichern. Deshalb auf der Auftragsseite und der Fotoseite eine Validierung (*PL/SQL Function Body returning
+   Error Text*, Bedingung: Request in `SAVE,CREATE`):
+
+   ```plsql
+   for r in (select status, techniker from xx_auftrag where id = :P2_ID) loop
+       if r.status = 'STORNIERT' then
+           return 'Auftrag wurde storniert – bitte Disposition anrufen.';
+       elsif r.techniker is null or r.techniker <> :APP_USER then
+           return 'Auftrag ist inzwischen ' || nvl(r.techniker, 'niemandem') || ' zugewiesen – bitte Disposition anrufen.';
+       end if;
+   end loop;
+   return null;
+   ```
+
+   Sie wirkt online wie bei der Übertragung: Der Entwurf bekommt den Status *fehler* mit diesem Text und bleibt
+   auf dem Gerät. Hat die Disposition es geklärt, überträgt „Jetzt übertragen“ erneut. Die Formularquelle nicht
+   auf den Techniker einschränken (das gäbe eine Fehlerseite statt einer Meldung); zugewiesene Aufträge
+   stornieren statt löschen.
+5. **Sitzungsdauer.** Offline gehen keine Anfragen an den Server, die Sitzung läuft also im Leerlauf ab.
+   *Maximum Session Idle Time* mindestens so lang wie die längste Offline-Strecke eines Arbeitstags (z. B. 12 h)
+   – oder abends neu anmelden; die Entwürfe warten darauf.
+6. **Last am Morgen.** Mit 8 Aufträgen lädt der Vorrat je Anmeldung die Liste, 8 Auftragsseiten und 8
+   Foto-Seiten: 17 Seitenaufrufe (die Beispiel-App mit Protokoll, Anlegeseite und Auswertung: 27). 200 Techniker
+   um 7:30 Uhr sind rund 3 400 Aufrufe in wenigen Minuten; jedes Gerät lädt nacheinander, es laufen also höchstens
+   etwa 200 Anfragen gleichzeitig. Den ORDS-Verbindungspool (`jdbc.MaxLimit`) danach bemessen.
+7. **Am Gerät.** Offline gehen, wenn die Anzeige nicht mehr „lädt“ zeigt. Neue Aufträge im Lauf des Tages: Liste
+   online öffnen. Abends die App online öffnen und im Vordergrund lassen, bis „offen“ verschwindet. Geräte, die
+   sich mehrere teilen: vor der Übergabe alles übertragen (Entwürfe gehören ihrem Ersteller).
+8. **Gleiche Herkunft.** `#APEX_FILES#` muss vom eigenen Server kommen, nicht von einem CDN: die
+   Erreichbarkeitsprüfung fragt dort nach.
+
 ## Release und Update
 
 1. **Datenbank zuerst:** neue Tabellen und Spalten vor der App einspielen – sonst zeigen Seiten auf
@@ -201,6 +289,39 @@ Was danach auf den Geräten passiert:
   Erfasstes haben; bei größeren Umbauten vorher übertragen lassen.
 * Alte Dateiversionen bleiben im Browser (je Release rund 1–2 MB mit Barcode-Decoder). Aufräumen lässt
   sich das über „Websitedaten löschen" im Browser – vorher alles übertragen.
+
+## Woran die Schicht in APEX hängt
+
+Neben dokumentierten APIs (`apex.env`, `apex.item`, `apex.page.submit/validate/isChanged`, `apex.message`,
+`apex.util`, `apex.navigation.dialog.close`) nutzt die Schicht Verhalten von APEX 26.1, das nicht als API
+zugesagt ist. Alles davon steht hier, damit ein APEX-Upgrade gezielt geprüft werden kann. Die Spalte „Test“ nennt
+den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
+
+| Was | wofür | Test |
+|---|---|---|
+| Ereignis `apexbeforepagesubmit` und Flag `apex.event.gCancelFlag` (gebunden in `apexreadyend`) | Absenden ohne Verbindung abbrechen | 0, 3, 4 |
+| verstecktes Feld `#pReloadOnSubmit` | Absenden per Ajax erzwingen, damit ein Abbruch erkannt wird | 0, 3 |
+| Absenden = `apex.jQuery.ajax`-POST an `wwv_flow.accept`; Erfolg = `responseJSON.redirectURL`; Status 0 oder ab 502 = Server weg | Zeitlimit, abgebrochenes Speichern erkennen | 6, 8, 11 |
+| nach dem Ajax-Absenden ruft APEX `apex.navigation.redirect` oder `apex.message.showErrors` (in der Übertragungsseite ersetzt) | Ergebnis der Übertragung | 0, 6, 7 |
+| `apex.page.forEachPageItem` | genau die Items lesen, die APEX absendet | 0, 3–7 |
+| Markierungen `[data-for="ITEM"]` (geschütztes Item), `id="wwvFlowForm"`, `type="password"` | Prüfsummen-Items auslassen; echte Seite von Fehler- und Anmeldeseite unterscheiden | 0, 1, 3–8 |
+| Ziel eines Buttons als Inline-Skript `apex.jQuery("#B…")…navigation.redirect('…')` | Vorrat: Ziele von Buttons | 1 |
+| Universal Theme: `.t-NavigationBar`, `#t_TreeNav`, `.t-Header-nav`, `#main`, `.t-Form-itemWrapper`, Druck-Klassen | Statusanzeige, Menülinks, Hinweis „Nur online“, Scan-Taste, Druck | 0, 1, 9, 12 |
+| Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
+| generierte `sw.js`: lädt die Hook-Datei per `importScripts` vor dem eigenen `fetch`-Listener; Hook `FUNCTION_VARIABLE_DECLARATION` mit `apex.sw.cleanAppCaches/cleanAPEXCaches`; `/i/` und `<app>/files/static/v…` aus dem eigenen Cache, alle anderen GET-Anfragen offline mit leerer Antwort | Seitenspeicher vor dem von APEX; alte Dateien behalten | 0, 1, 2, 9 |
+| Textdateien `wwv_flow.js_messages` / `js_dialogs` | gespeicherte Seiten offline vollständig | 2 |
+| `#APEX_FILES#apex_version.txt` auf derselben Herkunft | Erreichbarkeitsprüfung (HEAD) | 2, 6 |
+| Parameter der Friendly URLs `session cs clear success_msg tz debug request` | Schlüssel gespeicherter Seiten, Aufruf mit der aktuellen Sitzung | 1–8 |
+| Prüfsummen auf Benutzerebene sind über Sitzungen gleich; Deep Linking; *Rejoin Sessions* wirkt nicht | Entwürfe überstehen eine neue Anmeldung | 8 |
+| große CLOB-Item-Werte werden beim Absenden in Stücken übertragen | Unterschrift und Foto als Data-URL | 11 |
+
+**APEX-Upgrade prüfen:**
+
+1. Die neue APEX-Version auf einer Testinstanz installieren und die App importieren.
+2. `npm test` ausführen. Schritt 0 prüft die Interna zuerst und nennt, was sich geändert hat.
+3. Die generierte `sw.js` der App ansehen (Adresse in den Entwicklertools unter *Application → Service Workers*):
+   Hook-Datei vor dem `fetch`-Listener, Hook-Namen, Cache-Regeln.
+4. Die Tabelle durchgehen.
 
 ## Beispiel-App installieren
 
@@ -231,7 +352,8 @@ für die Links in offline gespeicherten Seiten und Entwürfen.
 ## Test
 
 `tests/offline.test.js` spielt den Außendienst im echten Browser (Playwright, Chromium) gegen eine
-laufende Instanz durch: Offline-Vorrat, Liste und nie geöffneter Auftrag offline, Erfassen mit
+laufende Instanz durch. Zuerst prüft Schritt 0 die [APEX-Interna](#woran-die-schicht-in-apex-hängt), dann folgen
+Offline-Vorrat, Liste und nie geöffneter Auftrag offline, Erfassen mit
 Unterschrift, Prüfung am Item, Neuanlage, automatische Übertragung, Konflikt, abgelaufene Sitzung mit
 neuer Anmeldung, Scannen mit simulierter Kamera ohne Zugriff auf fremde Server, Verwerfen, Foto, Seite
 nur für online.
