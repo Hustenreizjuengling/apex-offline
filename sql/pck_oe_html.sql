@@ -1,11 +1,9 @@
--- Anzeige von Bildern, die als Data-URL gespeichert sind (Unterschrift, Fotos) - nur für die Beispiel-App
+-- Anzeige der Unterschrift (Data-URL) im Protokoll - nur für die Beispiel-App.
+-- Fotos liegen als Bild (BLOB) vor und werden nativ angezeigt (Seite 3, Spalte "Display Image").
 create or replace package pck_oe_html as
 
     -- <img> für eine Data-URL; null, wenn der Wert kein Bild im erwarteten Format ist
     function bild(p_data_url in clob, p_alt in varchar2, p_style in varchar2 default null) return clob;
-
-    -- alle Fotos eines Auftrags als Bildergalerie
-    function fotos(p_auftrag_id in number) return clob;
 
     -- CLOB stückweise ausgeben (für Items "Display Only - Output of PL/SQL Code")
     procedure drucken(p_html in clob);
@@ -29,31 +27,6 @@ create or replace package body pck_oe_html as
         dbms_lob.append(l_html, to_clob('">'));
         return l_html;
     end bild;
-
-    function fotos(p_auftrag_id in number) return clob is
-        l_html clob := to_clob('<div style="display:flex;flex-wrap:wrap;gap:12px">');
-        l_bild clob;
-        l_count pls_integer := 0;
-    begin
-        for r in (select foto, bemerkung from oe_auftrag_foto where auftrag_id = p_auftrag_id order by id) loop
-            l_bild := bild(r.foto, coalesce(r.bemerkung, 'Foto'), 'display:block;width:180px;max-width:100%;border-radius:4px');
-            if l_bild is not null then
-                dbms_lob.append(l_html, to_clob('<figure style="margin:0;width:180px;max-width:100%">'));
-                dbms_lob.append(l_html, l_bild);
-                if r.bemerkung is not null then
-                    dbms_lob.append(l_html, to_clob('<figcaption style="font-size:.8rem">'
-                                                    || apex_escape.html(r.bemerkung) || '</figcaption>'));
-                end if;
-                dbms_lob.append(l_html, to_clob('</figure>'));
-                l_count := l_count + 1;
-            end if;
-        end loop;
-        if l_count = 0 then
-            return to_clob('<p>Noch keine Fotos.</p>');
-        end if;
-        dbms_lob.append(l_html, to_clob('</div>'));
-        return l_html;
-    end fotos;
 
     procedure drucken(p_html in clob) is
         l_len pls_integer;

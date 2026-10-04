@@ -484,7 +484,8 @@
 
     /* ---------- 3b. Foto: CSS-Klasse offline-photo an einer Textarea ----------
      * Kamera oder Galerie; das Bild wird im Browser auf höchstens 1600 Pixel verkleinert und als JPEG-Data-URL
-     * zum Wert des Items (Spalte CLOB). APEX überträgt auch Werte mit mehreren 100 000 Zeichen. */
+     * zum Wert des Items (Session State CLOB). APEX überträgt auch Werte mit mehreren 100 000 Zeichen; die Seite
+     * speichert sie per Prozess als Bild (Beispiel: pck_oe_auftrag_foto_dml). */
 
     const PHOTO_MAX = 1600, PHOTO_QUALITY = 0.8;
 

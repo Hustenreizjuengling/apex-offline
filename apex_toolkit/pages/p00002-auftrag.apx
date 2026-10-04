@@ -35,13 +35,21 @@ page 2 (
         }
     )
 
+    // Fotos nur als Liste: gespeicherte Offline-Seiten tragen keine Bilddaten (Bilder zeigt das Protokoll online)
     region fotos (
         name: Fotos
-        type: dynamicContent
+        type: classicReport
         source {
-            plsqlFunctionBody:
-                ```plsql
-                return pck_oe_html.fotos(:P2_ID);
+            location: localDatabase
+            type: sqlQuery
+            sqlQuery:
+                ```sql
+                select bemerkung,
+                       to_char(created_at, 'DD.MM.YYYY HH24:MI') as gespeichert,
+                       created_by as von
+                  from oe_auftrag_foto
+                 where auftrag_id = :P2_ID
+                 order by id
                 ```
         }
         layout {
@@ -51,12 +59,53 @@ page 2 (
         appearance {
             template: @/standard
             templateOptions: #DEFAULT#
-            cssClasses: offline-prefetch
+            cssClasses: [
+                offline-prefetch
+                oe-fotos
+            ]
+        }
+        reportLayout {
+            numberOfRows: 100
+        }
+        componentAppearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        messages {
+            whenNoDataFound: Noch keine Fotos.
         }
         serverSideCondition {
             type: itemIsNotNull
             item: P2_ID
         }
+
+        column BEMERKUNG (
+            type: plainText
+            heading {
+                heading: Bemerkung
+            }
+            layout {
+                sequence: 10
+            }
+        )
+        column GESPEICHERT (
+            type: plainText
+            heading {
+                heading: Gespeichert am
+            }
+            layout {
+                sequence: 20
+            }
+        )
+        column VON (
+            type: plainText
+            heading {
+                heading: von
+            }
+            layout {
+                sequence: 30
+            }
+        )
     )
 
     button foto-hinzufuegen (

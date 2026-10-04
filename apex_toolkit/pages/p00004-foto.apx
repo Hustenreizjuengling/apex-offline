@@ -99,13 +99,9 @@ page 4 (
         advanced {
             cssClasses: offline-photo
         }
-        source {
-            formRegion: @foto
-            column: FOTO
-            dataType: clob
-        }
         sessionState {
             dataType: clob
+            storage: request
         }
     )
 
@@ -190,15 +186,32 @@ page 4 (
         }
     )
 
-    process formular-speichern (
-        name: Formular speichern
-        type: formAutoRowProcessing
-        formRegion: @foto
+    // Das Foto kommt als Data-URL (offline-photo) und wird als Bild gespeichert. Dasselbe Foto erneut gesendet
+    // (z. B. nach abgebrochener Übertragung) ist ein Erfolg mit der vorhandenen Zeile.
+    process foto-speichern (
+        name: Foto speichern
+        type: executeCode
+        source {
+            plsqlCode:
+                ```plsql
+                :P4_ID := pck_oe_auftrag_foto_dml.anlegen(
+                              p_auftrag_id => :P4_AUFTRAG_ID,
+                              p_data_url   => apex_session_state.get_clob('P4_FOTO'),
+                              p_bemerkung  => :P4_BEMERKUNG);
+                ```
+        }
         execution {
             sequence: 10
         }
         successMessage {
             successMessage: Foto gespeichert.
+        }
+        error {
+            errorMessage: #SQLERRM_TEXT#
+        }
+        serverSideCondition {
+            type: requestIsContainedInValue
+            value: CREATE
         }
     )
 

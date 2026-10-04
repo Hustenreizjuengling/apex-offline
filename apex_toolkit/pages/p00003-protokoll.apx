@@ -5,9 +5,20 @@ page 3 (
     appearance {
         pageTemplate: @/standard
         templateOptions: #DEFAULT#
+        cssClasses: online-only
     }
     navigation {
         cursorFocus: doNotFocusCursor
+    }
+    css {
+        inline:
+            ```css
+            .oe-fotos img { display: block; max-width: min(100%, 480px); height: auto; border-radius: 4px; }
+            @media print {
+                .oe-fotos img { max-width: 100%; max-height: 12cm; }
+                .oe-fotos tr { break-inside: avoid; }
+            }
+            ```
     }
     security {
         pageAccessProtection: argumentsMustHaveChecksum
@@ -295,11 +306,18 @@ page 3 (
 
     region fotos (
         name: Fotos
-        type: dynamicContent
+        type: classicReport
         source {
-            plsqlFunctionBody:
-                ```plsql
-                return pck_oe_html.fotos(:P3_ID);
+            location: localDatabase
+            type: sqlQuery
+            sqlQuery:
+                ```sql
+                select id,
+                       dbms_lob.getlength(bild) as bild,
+                       bemerkung
+                  from oe_auftrag_foto
+                 where auftrag_id = :P3_ID
+                 order by id
                 ```
         }
         layout {
@@ -309,7 +327,50 @@ page 3 (
         appearance {
             template: @/standard
             templateOptions: #DEFAULT#
+            cssClasses: oe-fotos
         }
+        reportLayout {
+            numberOfRows: 100
+        }
+        componentAppearance {
+            template: @/standard
+            templateOptions: #DEFAULT#
+        }
+        messages {
+            whenNoDataFound: Keine Fotos.
+        }
+
+        column ID (
+            type: hidden
+            layout {
+                sequence: 10
+            }
+        )
+        column BILD (
+            type: displayImage
+            heading {
+                heading: Foto
+            }
+            layout {
+                sequence: 20
+            }
+            blobAttributes {
+                tableName: OE_AUFTRAG_FOTO
+                blobColumn: BILD
+                primaryKeyColumn1: ID
+                mimeTypeColumn: MIME_TYPE
+                lastUpdatedColumn: UPDATED_AT
+            }
+        )
+        column BEMERKUNG (
+            type: plainText
+            heading {
+                heading: Bemerkung
+            }
+            layout {
+                sequence: 30
+            }
+        )
     )
 
     button zurueck (

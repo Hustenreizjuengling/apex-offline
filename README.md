@@ -40,7 +40,7 @@ der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst
 | `messages.css` | optional: Seitenmeldungen oben mittig und kompakt (unabhängig von der Offline-Schicht) |
 | `vendor/barcode-detector/` | optional: Barcode-/QR-Decoder für iPhone, Windows, Firefox ([Fremdcode](THIRD-PARTY-NOTICES.md)) |
 
-Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur die Beispieltabelle an.
+Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur die Objekte der Beispiel-App an.
 
 ## In eine eigene App übernehmen (einmal je App)
 
@@ -100,7 +100,7 @@ sie zurück, lädt die Seite ihren aktuellen Inhalt. Eine gespeicherte Fassung z
 | Klasse | Wo | Ergebnis |
 |---|---|---|
 | `offline-signature` | Textarea-Item → Advanced → CSS Classes | Unterschriftenfeld; Wert ist ein Bild als Data-URL (Spalte CLOB, Session State Data Type CLOB, Label-Template „Optional – Above") |
-| `offline-photo` | Textarea-Item → Advanced → CSS Classes | Fotofeld: Kamera oder Galerie, Vorschau; das Bild wird im Browser auf höchstens 1600 Pixel verkleinert und ist als JPEG-Data-URL der Wert des Items (Spalte CLOB, Session State Data Type CLOB) |
+| `offline-photo` | Textarea-Item → Advanced → CSS Classes | Fotofeld: Kamera oder Galerie, Vorschau; das Bild wird im Browser auf höchstens 1600 Pixel verkleinert und ist als JPEG-Data-URL der Wert des Items (keine Formularspalte; Session State Data Type CLOB, Storage *Per Request*). Ein Prozess speichert es als Bild, siehe [Fotos am Auftrag](#fotos-am-auftrag) |
 | `offline-scan` | Textfeld-Item → Advanced → CSS Classes | Kamera-Taste für Barcode und QR-Code; Hand- und Bluetooth-Scanner tippen ohnehin ins Feld |
 | `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | die Ziele ihrer Links und Buttons gehören zum Offline-Vorrat (siehe unten) |
 
@@ -113,8 +113,8 @@ Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund – die Anzeig
 
 In der Beispiel-App sind das die Auftragsliste (Menü), jeder Auftrag und jedes Protokoll (Links im Bericht),
 die Anlegeseite (Button „Neuer Auftrag" in derselben Region) und je Auftrag die Seite „Foto hinzufügen"
-(Button in der Region „Fotos" des Auftrags) – bei fünf Aufträgen 17 Seiten, ohne einen Klick. Die Liste der
-Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
+(Button in der Region „Fotos" des Auftrags), dazu die Auswertung (Menü) – bei fünf Aufträgen 18 Seiten, ohne
+einen Klick. Die Liste der Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
 
 Damit eine Seite zum Vorrat gehört, muss sie also im Menü stehen oder von einer `offline-prefetch`-Region
 aus verlinkt sein. Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
@@ -163,29 +163,58 @@ ausgefüllter Wert, z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehör
 ## Fotos am Auftrag
 
 Beispiel für Anhänge, die offline entstehen: beliebig viele Fotos je Auftrag in der Tabelle
-`OE_AUFTRAG_FOTO`. Die Seite 4 „Foto" ist ein normales natives Formular auf dieser Tabelle mit einem
-Textarea-Item `P4_FOTO` (CSS-Klasse `offline-photo`) und einer Bemerkung. Der Auftrag (Seite 2) zeigt die
-Fotos in der Region „Fotos", deren Button „Foto hinzufügen" die Seite 4 mit dem Auftrag öffnet.
+`OE_AUFTRAG_FOTO`. Die Seite 4 „Foto" ist ein natives Formular mit dem Textarea-Item `P4_FOTO` (CSS-Klasse
+`offline-photo`) und einer Bemerkung. Der Auftrag (Seite 2) listet seine Fotos in der Region „Fotos", deren
+Button „Foto hinzufügen" die Seite 4 mit dem Auftrag öffnet.
 
-Offline ist ein Foto ein Entwurf wie jede andere Neuanlage und wird später durch Seite 4 abgesendet. APEX
-überträgt dabei auch Item-Werte mit mehreren 100 000 Zeichen (geprüft mit 260 000). Ein Handyfoto wird
-durch das Verkleinern auf 1600 Pixel zu etwa 150–400 KB. Für eine eigene Fotoseite gelten dieselben Regeln
-wie für jede Erfassungsseite: `offline-form`, Primärschlüssel und Auftragsbezug mit *User Level*, Link mit
-leerem Primärschlüssel. Bilder als Data-URL zeigt `pck_oe_html` an (`sql/pck_oe_html.sql`).
+**Übertragen als Data-URL, gespeichert als Bild.** Das Foto wird im Browser auf 1600 Pixel verkleinert (etwa
+150–400 KB) und geht als Data-URL durch den normalen Submit von Seite 4 – online genauso wie bei der
+Übertragung eines Offline-Entwurfs. APEX überträgt auch Item-Werte mit mehreren 100 000 Zeichen. Statt
+*Automatic Row Processing* ruft ein Prozess `pck_oe_auftrag_foto_dml.anlegen` auf
+(`sql/pck_oe_auftrag_foto_dml.sql`): Kopf abschneiden, Base64 dekodieren, Bildsignatur prüfen, als BLOB mit
+MIME-Typ speichern. Als Data-URL in einem CLOB bräuchte ein Foto das 2,7-Fache seiner JPEG-Größe (Base64 und
+2 Byte je Zeichen in einer AL32UTF8-Datenbank), als BLOB das 1,0-Fache.
+
+**Doppelt gesendet zählt einmal.** Dieselben Bytes am selben Auftrag werden nur einmal gespeichert; der
+Auftrag wird dafür kurz gesperrt, eine neuere Bemerkung wird übernommen. Ein Entwurf wird byte-gleich
+gesendet. Ein Foto-Entwurf mit dem Status *unklar* lässt sich deshalb ohne Prüfung öffnen und speichern.
+
+**Keine Bilddaten in gespeicherten Seiten.** Seite 2 zeigt die Fotos nur als Liste (Bemerkung, Zeitpunkt,
+Benutzer), die Bilder zeigt das Protokoll (Seite 3, nur online) mit einer nativen Spalte *Display Image* auf
+der BLOB-Spalte. So bleibt jede Seite im Offline-Vorrat klein. Offline aufgenommene Fotos sind bis zur
+Übertragung Entwürfe auf dem Gerät.
+
+Für eine eigene Fotoseite gelten dieselben Regeln wie für jede Erfassungsseite (`offline-form`,
+Primärschlüssel und Auftragsbezug mit *User Level*, Link mit leerem Primärschlüssel), dazu:
+
+* Das Foto-Item hat keine Formularspalte, *Session State Data Type* CLOB und *Storage* „Per Request (Memory
+  Only)“ – sonst bliebe jedes Foto in der Sitzung liegen.
+* Der Prozess liest es mit `apex_session_state.get_clob('P4_FOTO')` und hat als Fehlermeldung
+  `#SQLERRM_TEXT#`: so erscheint der Text des Pakets ohne ORA-Nummer, online am Formular wie im Entwurf.
+* Die Grenze für Formular-POSTs von ORDS, Anwendungsserver und Proxy muss über der größten Data-URL liegen;
+  der Test sendet ein Foto mit gut 1 MB.
+
+**Varianten für die Fachanwendung:** Sollen Fotos doch eingebettet auf einer Seite erscheinen, liefert
+`to_clob('data:' || mime_type || ';base64,')` plus `apex_web_service.blob2clobbase64(bild, p_newlines => 'N')`
+die Data-URL – das Gewicht steckt dann in jeder gespeicherten Seite. In der Beispiel-App bleibt die
+Unterschrift eine Data-URL in einer CLOB-Spalte: wenige KB, und sie nimmt an der Konflikterkennung des
+Formulars teil. Soll auch sie ein BLOB werden: eine Berechnung *Before Header* füllt das Item mit der Data-URL,
+ein Prozess nach dem Formular speichert sie mit `pck_oe_auftrag_foto_dml.bild_aus_data_url`.
 
 ## Protokoll
 
 Seite 3 zeigt einen Auftrag mit Unterschrift und Fotos druckfertig an; *Drucken / PDF* nutzt den
-Druckdialog des Browsers. Unterschrift und Fotos gibt `pck_oe_html` aus, weil das Item *Display Image*
-keine Data-URLs über 4000 Zeichen darstellen kann. Offline erfasste Daten erscheinen im Protokoll nach der
-Übertragung.
+Druckdialog des Browsers. Die Seite ist `online-only`: Offline erfasste Daten erscheinen im Protokoll erst nach
+der Übertragung, eine gespeicherte Fassung zeigte den alten Stand. Die Fotos zeigt eine native Spalte *Display
+Image*, die Unterschrift gibt `pck_oe_html` aus, weil das Item *Display Image* keine Data-URLs über 4000 Zeichen
+darstellen kann.
 
 ## Grenzen
 
 * Offline verfügbar ist der Offline-Vorrat und alles, was online aufgerufen wurde – im Stand des letzten
   Online-Aufrufs bzw. Vorrats (einmal je Sitzung, also z. B. bei der Anmeldung am Morgen).
-* Offline funktionieren Textfelder, Auswahllisten, Optionsfelder, Schalter, Datum, Zahl, Unterschrift und
-  Scan. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
+* Offline funktionieren Textfelder, Auswahllisten, Optionsfelder, Schalter, Datum, Zahl, Unterschrift, Foto
+  und Scan. Vorhandene Fotos erscheinen offline nur als Liste, das Protokoll nur online. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
   serverseitige Dynamic Actions, Regionen mit Lazy Loading.
 * Anmelden geht nur online. *Rejoin Sessions* wirkt auf der Instanz nicht; die installierte App startet
   online deshalb mit der Anmeldung, offline mit der gespeicherten Startseite.
@@ -264,7 +293,9 @@ dieses Rezept beschreibt, wie sie zur Offline-Schicht passt.
 ## Release und Update
 
 1. **Datenbank zuerst:** neue Tabellen und Spalten vor der App einspielen – sonst zeigen Seiten auf
-   Spalten, die es noch nicht gibt.
+   Spalten, die es noch nicht gibt. Was die alte Fassung noch braucht, erst nach dem Import entfernen. Beispiel
+   1.7.0: `sql/update.sql` vor dem Import (ergänzt die Spalte `BILD`), `sql/update_nach_import.sql` danach
+   (wandelt vorhandene Fotos um, entfernt die alte Spalte). Dazwischen arbeiten alte und neue Fassung.
 2. **Version erhöhen:** `version` in `application.apx` (Fehlerkorrektur 1.6.1, neues Verhalten 1.7.0).
    Sie steht in der Fußzeile der App; so sieht man auf jedem Gerät, welcher Stand läuft.
 3. **Builder-Änderungen sichern:** `apex import` ersetzt die ganze App. Was seit dem letzten Import im
@@ -281,6 +312,9 @@ Was danach auf den Geräten passiert:
 * **Gespeicherte Seiten** werden beim nächsten Aufruf der Seite oder beim nächsten Offline-Vorrat (neue
   Sitzung, also in der Regel bei der nächsten Anmeldung) durch die neue Fassung ersetzt. Bis dahin zeigt
   ein Gerät offline die alte Fassung – mit den alten Dateien, die dafür im Browser erhalten bleiben.
+* **Neu anmelden:** Der Import beendet alle Sitzungen der App. Geräte mit offenen Entwürfen übertragen erst
+  nach der nächsten Anmeldung (Status *wartet*, „Anmeldung erforderlich“) – es geht nichts verloren. Releases
+  deshalb nicht mitten am Arbeitstag einspielen.
 * **Offene Entwürfe** aus der alten Fassung werden durch die neue Seite übertragen. Gibt es ein Feld nicht
   mehr, bekommt der Entwurf den Status *fehler* („Nicht übernommen: …"); verlangt die neue Fassung ein
   zusätzliches Pflichtfeld, lehnt der Server ab. In beiden Fällen öffnet der Anwender den Entwurf,
@@ -328,7 +362,7 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 ```text
 sql -name <verbindung>
 SQL> cd sql
-SQL> @install.sql                         -- Tabellen OE_AUFTRAG (fünf Aufträge), OE_AUFTRAG_FOTO, Paket PCK_OE_HTML
+SQL> @install.sql                         -- Tabellen OE_AUFTRAG (fünf Aufträge), OE_AUFTRAG_FOTO, Pakete
 SQL> cd ..
 SQL> apex import -input apex_toolkit -workspace <workspace>   -- App 1700, Alias ERFASSUNG
 ```
@@ -364,7 +398,11 @@ npx playwright install chromium              # einmalig, falls Chromium noch feh
 OE_URL=https://<server>/ords/r/<workspace>/erfassung OE_USER=<benutzer> OE_PASSWORD=<kennwort> npm test
 ```
 
-Der Test legt Aufträge und Fotos an (Kennung `T…` im Titel) und ändert die fünf Beispielaufträge.
+Der Test legt zwei Testaufträge mit Fotos an (Kennung `T…`) und löscht sie am Ende wieder; die fünf
+Beispielaufträge ändert er.
+
+`tests/smoke_test.sql` prüft die Datenbankobjekte (Fotos dekodieren, Fehlermeldungen, doppelt gesendet) und
+ändert nichts: `sql -S -name <verbindung> @tests/smoke_test.sql` aus dem Projektordner.
 
 ## Logo und Bilder
 

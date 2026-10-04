@@ -58,17 +58,25 @@ async function waitFor(fn, ms = 30000, what = "Bedingung") {
 }
 async function serverValues(page, nr) {             // Werte so, wie das Protokoll (Seite 3) sie vom Server zeigt
     await gotoList(page);
-    await Promise.all([page.waitForURL(/protokoll/), page.locator("tr", { hasText: nr }).getByRole("link", { name: "Protokoll" }).click()]);
-    return page.evaluate(() => {
+    await Promise.all([page.waitForURL(/protokoll/), page.locator("tr", { hasText: nr }).first().getByRole("link", { name: "Protokoll" }).click()]);
+    return page.evaluate(async () => {
         const text = id => document.getElementById(id + "_DISPLAY").innerText.trim();
+        const fotos = [];
+        for (const row of document.querySelectorAll(".oe-fotos tbody tr")) {
+            const img = row.querySelector("img"), note = row.querySelector('td[headers="BEMERKUNG"]');
+            if (!note) { continue; }
+            if (img) { await img.decode().catch(() => {}); }   // kaputtes Bild: Breite 0, Prüfung schlägt fehl
+            fotos.push({ text: (img ? "[Bild " + img.naturalWidth + "] " : "") + note.innerText.trim(), src: img ? img.src : "" });
+        }
         return {
             status: text("P3_STATUS"), befund: text("P3_BEFUND"), messwert: text("P3_MESSWERT"), asset: text("P3_ASSET_CODE"),
-            signer: text("P3_UNTERZEICHNER"), erledigt: text("P3_ERLEDIGT_AM"),
-            fotos: [...document.querySelectorAll("figure")].map(f => (f.querySelector("img") ? "[Bild] " : "") + f.innerText.trim()),
+            signer: text("P3_UNTERZEICHNER"), erledigt: text("P3_ERLEDIGT_AM"), fotos,
             signature: (document.querySelector("#P3_UNTERSCHRIFT_DISPLAY img") || {}).src || ""
         };
     });
 }
+const bytesOf = (page, src) => page.evaluate(async url => (await (await fetch(url)).arrayBuffer()).byteLength, src);
+const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValue().split(",")[1]).length);
 
 (async () => {
     const camera = require("path").join(__dirname, "fixtures", "barcode.mjpeg");   // simulierte Kamera zeigt einen EAN-13
@@ -260,10 +268,14 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         check(true, "Entwurf nach Rückfrage verworfen");
         await field.setOffline(false);
 
-        console.log("11. Foto offline anhängen, danach übertragen");
+        console.log("11. Fotos am eigenen Testauftrag: offline aufnehmen, doppelt senden, beschädigtes Foto");
+        await gotoList(page);                                       // online: Liste mit dem Testauftrag
+        const runId = new URL(await page.locator("td a", { hasText: RUN }).first().getAttribute("href"), URL_).searchParams.get("p2_id");
+        await waitFor(async () => { const c = await cachedPages(); return c.some(u => u.includes("p2_id=" + runId)) && c.some(u => u.includes("p4_auftrag_id=" + runId)); },
+            30000, "Testauftrag und seine Foto-Seite im Vorrat");
         await field.setOffline(true);
         await page.reload();
-        await openOrder(page, "A-1003");
+        await openOrder(page, RUN);
         await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);
         await page.setInputFiles(".offline-photo-box input[type=file]", require("path").join(__dirname, "fixtures", "foto.jpg"));
         await waitFor(async () => (await page.inputValue("#P4_FOTO")).startsWith("data:image/jpeg"), 10000, "Foto verkleinert");
@@ -273,18 +285,64 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
             return { w: img.naturalWidth, h: img.naturalHeight, kb: Math.round(apex.item("P4_FOTO").getValue().length / 1024) };
         });
         check(photo.w === 1600 && photo.h === 1200, `Foto im Browser verkleinert: 2400×1800 → ${photo.w}×${photo.h} (${photo.kb} KB)`);
+        const expected = await photoBytes(page);
+        const corrupt = await page.evaluate(() => apex.item("P4_FOTO").getValue().replace("data:image/jpeg", "data:image/png"));
         await page.fill("#P4_BEMERKUNG", "Typenschild " + RUN);
         await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
         await waitFor(async () => /1 offen/.test(await pill(page)), 10000, "1 offen");
         check(true, "Foto offline gespeichert, Anzeige: " + await pill(page));
+        await page.evaluate(async () => {                           // derselbe Entwurf ein zweites Mal (wie nach abgebrochenem Senden)
+            const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
+            const all = await new Promise(r => { const q = db.transaction("drafts").objectStore("drafts").getAll(); q.onsuccess = () => r(q.result); });
+            const d = all.find(x => x.page === "4");
+            await new Promise(r => { const t = db.transaction("drafts", "readwrite"); t.objectStore("drafts").put({ ...d, id: d.id + "-kopie", ts: d.ts + 1 }); t.oncomplete = r; });
+        });
+        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);
+        await page.evaluate(value => apex.item("P4_FOTO").setValue(value), corrupt);   // PNG-Kopf über JPEG-Bytes
+        await page.fill("#P4_BEMERKUNG", "Beschädigt " + RUN);
+        await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
+        await waitFor(async () => /3 offen/.test(await pill(page)), 10000, "3 offen");
         await field.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
-        await waitFor(async () => !/offen|lädt/.test(await pill(page).catch(() => "offen")), 60000, "Übertragung Foto");
-        const withPhoto = await serverValues(desk, "A-1003");
-        check(withPhoto.fotos.includes("[Bild] Typenschild " + RUN), "Foto mit Bemerkung im Protokoll: " + withPhoto.fotos.join(" | "));
+        await waitFor(async () => /1 offen/.test(await pill(page).catch(() => "")) && !/lädt|sendet/.test(await pill(page).catch(() => "lädt")), 90000, "Übertragung Fotos");
+        const withPhoto = await serverValues(desk, RUN);
+        const typenschild = withPhoto.fotos.filter(f => f.text.endsWith("Typenschild " + RUN));
+        check(typenschild.length === 1 && typenschild[0].text.startsWith("[Bild 1600]"),
+            "Foto genau einmal im Protokoll, obwohl zweimal gesendet: " + withPhoto.fotos.map(f => f.text).join(" | "));
+        const stored = typenschild.length ? await bytesOf(desk, typenschild[0].src) : 0;
+        check(stored === expected, `Bild vollständig gespeichert: ${stored} von ${expected} Bytes`);
+        await page.locator(".offline-status").click();
+        const broken = await page.locator(".offline-panel li", { hasText: "Beschädigt " + RUN }).innerText().catch(() => "");
+        check(/fehler/.test(broken) && /Das Foto ist beschädigt/.test(broken) && !/ORA-/.test(broken),
+            "beschädigtes Foto abgelehnt, lesbare Meldung: " + broken.replace(/\s+/g, " "));
+        await page.locator(".offline-panel li", { hasText: "Beschädigt " + RUN }).locator("[data-act=drop]").click();
+        await page.locator(".ui-dialog").getByRole("button", { name: "OK" }).click();
+        await waitFor(async () => !/offen/.test(await pill(page)), 10000, "keine Entwürfe");
         await gotoList(page);
-        await openOrder(page, "A-1003");
-        check(await page.locator("figure img").count() >= 1, "Foto auch am Auftrag sichtbar");
+        await openOrder(page, RUN);
+        const listed = await page.locator(".oe-fotos").innerText();
+        check(listed.includes("Typenschild " + RUN) && !(await page.content()).includes("data:image/jpeg"),
+            "Foto am Auftrag als Liste, ohne Bilddaten in der Seite");
+
+        console.log("11c. Großes Foto online (gut 1 MB als Data-URL): Grenze für Formular-POSTs");
+        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);
+        const big = await page.evaluate(() => {
+            const canvas = document.createElement("canvas");
+            canvas.width = 1600; canvas.height = 1200;
+            const ctx = canvas.getContext("2d"), data = ctx.createImageData(1600, 1200);
+            for (let i = 0; i < data.data.length; i++) { data.data[i] = (i % 4 === 3) ? 255 : Math.random() * 256; }   // Rauschen: kaum komprimierbar
+            ctx.putImageData(data, 0, 0);
+            let url = "";
+            for (let q = 0.95; q > 0.1; q -= 0.05) { url = canvas.toDataURL("image/jpeg", q); if (url.length < 1500000) { break; } }
+            apex.item("P4_FOTO").setValue(url);
+            return { chars: url.length, bytes: atob(url.split(",")[1]).length };
+        });
+        await page.fill("#P4_BEMERKUNG", "Groß " + RUN);
+        await Promise.all([page.waitForURL(/auftrag\?/, { timeout: 120000 }), page.getByRole("button", { name: "Speichern" }).click()]);
+        const withBig = await serverValues(desk, RUN);
+        const large = withBig.fotos.find(f => f.text.endsWith("Groß " + RUN));
+        const largeBytes = large ? await bytesOf(desk, large.src) : 0;
+        check(!!large && largeBytes === big.bytes, `großes Foto gespeichert: ${Math.round(big.chars / 1024)} KB Data-URL, ${largeBytes} von ${big.bytes} Bytes`);
 
         console.log("12. Seite nur online (Auswertung): ohne Verbindung Hinweis statt Inhalt");
         const report = () => page.getByRole("heading", { name: "Aufträge je Status" });
@@ -303,6 +361,16 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
         await waitFor(async () => await report().isVisible().catch(() => false) && !IS_COPY_PAGE(await page.content()), 20000, "Seite neu geladen");
         check(await notice().isHidden(), "wieder online: aktuelle Auswertung ohne Hinweis");
+
+        console.log("13. Aufräumen: Testaufträge samt Fotos im Büro löschen");
+        for (const nr of [RUN + "B", RUN]) {
+            await gotoList(desk);
+            await openOrder(desk, nr);
+            await desk.getByRole("button", { name: "Löschen", exact: true }).click();
+            await Promise.all([desk.waitForURL(/auftraege/), desk.locator(".ui-dialog").getByRole("button", { name: "Löschen", exact: true }).click()]);
+        }
+        await gotoList(desk);
+        check(await desk.locator("td", { hasText: RUN }).count() === 0, "Testaufträge gelöscht");
 
         check(errors.length === 0, "keine JavaScript-Fehler" + (errors.length ? ": " + errors.join(" | ") : ""));
     } catch (e) {

@@ -1,6 +1,6 @@
 -- Demo-Daten für die Offline-Erfassung (als Parsing Schema der App ausführen, z. B. HR; aus dem Ordner sql/)
--- Die Offline-Schicht selbst braucht KEINE Datenbankobjekte. Diese Tabelle ist nur das Beispiel,
--- auf dem die native Formularseite arbeitet.
+-- Die Offline-Schicht selbst braucht KEINE Datenbankobjekte. Tabellen und Pakete sind nur das Beispiel,
+-- auf dem die nativen Formularseiten arbeiten.
 set define off
 
 create table oe_auftrag (
@@ -42,6 +42,7 @@ end;
 /
 
 @@oe_auftrag_foto.sql
+@@pck_oe_auftrag_foto_dml.sql
 @@pck_oe_html.sql
 
 insert into oe_auftrag (nr, titel, kunde, ort) values ('A-1001', 'Wartung Heizungsanlage', 'Stadtwerke Nord', 'Hauptstraße 12, Kiel');

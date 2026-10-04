@@ -45,6 +45,9 @@ page 1 (
             templateOptions: #DEFAULT#
             cssClasses: offline-prefetch
         }
+        reportLayout {
+            numberOfRows: 100
+        }
         componentAppearance {
             template: @/standard
             templateOptions: #DEFAULT#
