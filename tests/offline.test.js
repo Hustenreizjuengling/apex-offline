@@ -63,6 +63,10 @@ async function drafts(page) {                   // Entwürfe dieses Benutzers au
     }).catch(e => "?" + e.message);
 }
 const IS_COPY_PAGE = html => html.includes('name="offline-copy"');
+const cachedOf = page => page.evaluate(async () => {         // Adressen der gespeicherten Seiten
+    const name = (await caches.keys()).find(n => n.startsWith("offline-pages:"));
+    return name ? (await (await caches.open(name)).keys()).map(r => r.url) : [];
+}).catch(() => []);
 async function waitFor(fn, ms = 30000, what = "Bedingung") {
     const end = Date.now() + ms;
     while (Date.now() < end) { if (await fn()) { return true; } await new Promise(r => setTimeout(r, 500)); }
@@ -127,10 +131,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
 
         console.log("1. Online nur anmelden: der Offline-Vorrat lädt alle Seiten im Hintergrund");
         const orders = await page.locator(".offline-prefetch td a", { hasText: /^A-\d+|^T/ }).count();
-        const cachedPages = () => page.evaluate(async () => {
-            const name = (await caches.keys()).find(n => n.startsWith("offline-pages:"));
-            return name ? (await (await caches.open(name)).keys()).map(r => r.url) : [];
-        });
+        const cachedPages = () => cachedOf(page);
         const complete = list => list.some(u => /\/auftraege$/.test(u)) && list.some(u => /\/auftrag\?p2_id=$/.test(u))
             && list.filter(u => /\/auftrag\?p2_id=\d/.test(u)).length >= orders && list.filter(u => /\/protokoll\?p3_id=\d/.test(u)).length >= orders
             && list.filter(u => /\/foto\?/.test(u)).length >= orders;
@@ -139,6 +140,41 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(await page.evaluate(() => !!navigator.serviceWorker.controller), "Seite wird vom Service Worker kontrolliert");
         check(complete(cached), `Vorrat ohne einen Klick: Liste, Anlegeseite, je ${orders} Aufträge, Protokolle und Foto-Seiten (`
             + cached.filter(u => u.startsWith(URL_)).length + " Seiten)");
+        await page.locator(".offline-status").click();
+        const stockLine = await page.locator(".offline-panel .offline-stock").innerText();
+        await page.locator(".offline-panel [data-act=close]").click();
+        check(!/unvollständig/.test(await pill(page)) && /vollständig geladen/.test(stockLine), "Vorrat als vollständig gemeldet: " + stockLine);
+
+        console.log("1b. Vorrat unterbrochen: Verbindung weg mitten im Laden, danach ohne Klick vervollständigt");
+        const cutCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });
+        const cut = await cutCtx.newPage();
+        cut.on("pageerror", e => errors.push(e.message));
+        cut.on("dialog", d => d.accept());
+        await login(cut);
+        let interrupted = false;
+        for (let attempt = 0; attempt < 3 && !interrupted; attempt++) {
+            if (attempt > 0) {                                      // war schon fertig: neu laden lassen und dabei trennen
+                await waitFor(async () => { const t = await pill(cut).catch(() => ""); return /^Online/.test(t) && settled(t); }, 30000, "wieder online");
+                await cut.locator(".offline-status").click();
+                await cut.locator(".offline-panel [data-act=restock]").click();
+            }
+            await waitFor(async () => /lädt/.test(await pill(cut).catch(() => "")), 20000, "Vorrat lädt").catch(() => {});
+            await cutCtx.setOffline(true);
+            await cut.evaluate(() => window.dispatchEvent(new Event("offline")));
+            interrupted = await waitFor(async () => /unvollständig/.test(await pill(cut).catch(() => "")), 15000, "unvollständig").catch(() => false);
+            if (!interrupted) { await cutCtx.setOffline(false); await cut.evaluate(() => window.dispatchEvent(new Event("online"))); }
+        }
+        check(interrupted, "Verbindung weg mitten im Vorrat, Anzeige: " + await pill(cut));
+        await cutCtx.setOffline(false);
+        await cut.evaluate(() => window.dispatchEvent(new Event("online")));
+        await waitFor(async () => { const t = await pill(cut).catch(() => "lädt"); return !/unvollständig|lädt/.test(t) && complete(await cachedOf(cut)); }, 60000, "Vorrat fortgesetzt").catch(() => {});
+        check(complete(await cachedOf(cut)) && !/unvollständig/.test(await pill(cut)), "Vorrat nach der Unterbrechung selbstständig vervollständigt");
+        await cut.locator(".offline-status").click();
+        await cut.locator(".offline-panel [data-act=restock]").click();
+        await waitFor(async () => /lädt/.test(await pill(cut).catch(() => "")), 10000, "neu laden").catch(() => {});
+        await waitFor(async () => !/lädt|unvollständig/.test(await pill(cut).catch(() => "lädt")), 60000, "neu geladen");
+        check(true, "„Vorrat neu laden“ lädt alles erneut, Anzeige: " + await pill(cut));
+        await cutCtx.close();
 
         console.log("2. Offline: Liste und nie geöffneter Auftrag kommen aus dem Cache");
         await field.setOffline(true);
@@ -146,7 +182,9 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.waitForSelector(".offline-status");
         check(await page.locator('meta[name="offline-copy"]').count() === 1, "Liste offline aus dem Cache");
         await waitFor(async () => /Offline/.test(await pill(page)), 10000, "Anzeige Offline");
-        check(/Offline/.test(await pill(page)), "Statusanzeige: " + await pill(page));
+        check(/^Offline · Stand \d\d:\d\d$/.test(await pill(page)), "Statusanzeige mit Stand der gespeicherten Fassung: " + await pill(page));
+        const prefetchOffline = await page.evaluate(() => fetch(location.href, { headers: { "x-offline-prefetch": "1" } }).then(() => "geliefert", () => "abgelehnt"));
+        check(prefetchOffline === "abgelehnt", "Vorrat bekommt offline keine gespeicherte Fassung untergeschoben");
         await openOrder(page, "A-1001");
         check(await page.inputValue("#P2_TITEL") === "Wartung Heizungsanlage", "Auftrag A-1001 offline geöffnet (vorab geladen)");
 
@@ -232,6 +270,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.fill("#P2_TITEL", "Nach Anmeldung angelegt " + RUN);
         await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Anlegen" }).click()]);
         await waitFor(async () => /2 offen/.test(await pill(page)), 10000, "2 offen");
+        await openOrder(page, "A-1004");                            // Erfassungsseite: lädt bei Verbindung nicht selbst neu
         await field.clearCookies();                                 // Sitzung weg
         await field.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
@@ -269,6 +308,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(foreign.length === 0, "keine Anfrage an fremde Server" + (foreign.length ? ": " + foreign.join(", ") : ""));
 
         console.log("10. Entwurf verwerfen");
+        await gotoList(page);                                       // Schritt 8 endet auf einem Auftrag
         await field.setOffline(true);
         await page.reload();
         await openOrder(page, "A-1005");
@@ -278,9 +318,13 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.locator(".offline-status").click();
         await page.locator(".offline-panel [data-act=drop]").click();
         await page.locator(".ui-dialog").getByRole("button", { name: "OK" }).click();
-        await waitFor(async () => (await pill(page)).trim() === "Offline", 10000, "keine Entwürfe");
+        await waitFor(async () => /^Offline · Stand [^·]+$/.test((await pill(page)).trim()), 10000, "keine Entwürfe");
         check(true, "Entwurf nach Rückfrage verworfen");
+        console.log("10b. Verbindung zurück auf der gespeicherten Liste: lädt den aktuellen Stand von selbst");
         await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        await waitFor(async () => !IS_COPY_PAGE(await page.content().catch(() => 'name="offline-copy"')), 20000, "Liste neu geladen").catch(() => {});
+        check(!IS_COPY_PAGE(await page.content()) && /^Online/.test(await pill(page)), "gespeicherte Liste durch die aktuelle ersetzt");
 
         console.log("11. Fotos am eigenen Testauftrag: offline aufnehmen, doppelt senden, beschädigtes Foto");
         await gotoList(page);                                       // online: Liste mit dem Testauftrag
@@ -408,7 +452,24 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await waitFor(async () => await report().isVisible().catch(() => false) && !IS_COPY_PAGE(await page.content()), 20000, "Seite neu geladen");
         check(await notice().isHidden(), "wieder online: aktuelle Auswertung ohne Hinweis");
 
-        console.log("13. Aufräumen: Testaufträge samt Fotos im Büro löschen");
+        console.log("13. Online gespeichert, danach offline geöffnet: die gespeicherte Fassung zeigt den neuen Stand");
+        await gotoList(page);
+        await openOrder(page, "A-1004");
+        await page.fill("#P2_BEFUND", "Online " + RUN);
+        await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Speichern" }).click()]);
+        await waitFor(() => page.evaluate(async text => {
+            const c = await caches.open((await caches.keys()).find(n => n.startsWith("offline-pages:")));
+            for (const r of await c.keys()) { if (/auftrag\?p2_id=\d/.test(r.url) && (await (await c.match(r)).text()).includes(text)) { return true; } }
+            return false;
+        }, "Online " + RUN), 15000, "neue Fassung gespeichert").catch(() => {});
+        await field.setOffline(true);
+        await page.reload();
+        await openOrder(page, "A-1004");
+        check(await page.inputValue("#P2_BEFUND") === "Online " + RUN, "offline geöffnet: Stand nach dem Online-Speichern");
+        await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+
+        console.log("14. Aufräumen: Testaufträge samt Fotos im Büro löschen");
         for (const nr of [RUN + "B", RUN]) {
             await gotoList(desk);
             await openOrder(desk, nr);

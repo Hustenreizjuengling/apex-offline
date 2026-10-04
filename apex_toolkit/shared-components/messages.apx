@@ -53,3 +53,27 @@ textMessage FLOW.VALIDATION_ERROR (
         usedInJavaScript: true
     }
 )
+
+textMessage APEX.DIALOG.CANCEL (
+    message {
+        text: "Abbrechen"
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage APEX.DIALOG.CLOSE (
+    message {
+        text: "Schließen"
+        language: de
+        usedInJavaScript: true
+    }
+)
+
+textMessage APEX.DIALOG.CONFIRMATION (
+    message {
+        text: "Bestätigung"
+        language: de
+        usedInJavaScript: true
+    }
+)

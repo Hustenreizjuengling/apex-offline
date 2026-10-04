@@ -20,7 +20,7 @@ der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst
 1. **Offline-Vorrat:** Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund alle Seiten, die
    offline gebraucht werden – ohne dass sie jemand öffnen muss (siehe unten). Der Service Worker speichert
    sie und jede weitere aufgerufene Seite. Ohne Verbindung (oder wenn der Server 4 Sekunden nicht
-   antwortet) liefert er die zuletzt gespeicherte Fassung.
+   antwortet) liefert er die zuletzt gespeicherte Fassung; die Anzeige nennt dann ihren Stand.
 2. **Offline speichern:** Auf Seiten mit der CSS-Klasse `offline-form` fängt `offline.js` das Absenden
    ab, wenn der Server nicht erreichbar ist, prüft die Pflichtfelder wie online und legt nur die
    **geänderten Felder** (alter und neuer Wert) als Entwurf im Browser ab (IndexedDB).
@@ -84,7 +84,7 @@ auf der Seite. Einfache Bereichs- und Pflichtprüfungen deshalb am Item festlege
 (Abgleich mit anderen Tabellen, mehrere Datensätze) als Validierung.
 
 Die Meldungen der Browser-Prüfung sind APEX-Texte. `shared-components/messages.apx` stellt die wichtigsten
-auf Deutsch (*Shared Components → Text Messages*, „Used in JavaScript"), falls das deutsche Sprachpaket
+(und die Knöpfe der APEX-Dialoge) auf Deutsch (*Shared Components → Text Messages*, „Used in JavaScript"), falls das deutsche Sprachpaket
 auf der Instanz fehlt.
 
 ## Seiten nur für online
@@ -107,7 +107,7 @@ sie zurück, lädt die Seite ihren aktuellen Inhalt. Eine gespeicherte Fassung z
 
 ## Offline-Vorrat: was ohne vorheriges Öffnen offline verfügbar ist
 
-Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund – die Anzeige zeigt dabei „Online · lädt":
+Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund – die Anzeige zeigt dabei „Online · lädt“:
 
 1. alle Seiten des **Navigationsmenüs**,
 2. von dort aus, auch mehrstufig, die Ziele aller **Links und Buttons in Regionen mit `offline-prefetch`**.
@@ -119,7 +119,17 @@ einen Klick. Die Liste der Entwürfe zeigt, wie viele Seiten offline verfügbar 
 
 Damit eine Seite zum Vorrat gehört, muss sie also im Menü stehen oder von einer `offline-prefetch`-Region
 aus verlinkt sein. Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
-Links auf modale Dialoge und fremde Apps. Höchstens 300 Seiten je Durchlauf.
+Links auf modale Dialoge und fremde Apps.
+
+Der Vorrat zählt nur Seiten, die wirklich frisch vom Server kamen. Reißt die Verbindung ab, kommt eine Seite
+nicht oder läuft die Sitzung ab, merkt er sich, wo er stand: Die Anzeige zeigt dann **„Vorrat unvollständig“**,
+und er macht weiter, sobald die Verbindung zurück ist (auch wenn die App wieder in den Vordergrund kommt,
+sonst spätestens alle zwei Minuten). Erst wenn „lädt“ und „unvollständig“ verschwunden sind, ist alles da.
+Eine Seite, die dreimal nicht kommt (z. B. ohne Berechtigung), gilt als nicht abrufbar; die Liste der
+Entwürfe nennt ihre Zahl.
+Danach kommen neue Datensätze beim Öffnen der Liste dazu; geänderte Datensätze kommen beim Öffnen, mit dem
+Knopf **„Vorrat neu laden“** in der Liste der Entwürfe oder mit der nächsten Sitzung. Höchstens 300 Seiten je
+Sitzung; ist die Grenze erreicht, steht dort „Vorrat begrenzt“ und es wird nicht selbst weitergeladen.
 
 Die Liste in der `offline-prefetch`-Region muss deshalb **auf die eigenen Datensätze gefiltert** sein
 (z. B. `where techniker = :APP_USER` und der heutige Tag, siehe [Außendienst](#außendienst-disposition-und-techniker)).
@@ -159,6 +169,12 @@ z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehört also nach oben.
 
 Wartende Entwürfe gehen automatisch raus: beim Laden einer Seite, sobald die Verbindung zurück ist, wenn die
 App wieder in den Vordergrund kommt und sonst spätestens alle zwei Minuten.
+
+Eine gespeicherte Fassung zeigt in der Anzeige ihren Stand, z. B. **„Offline · Stand 07:42“** (ältere Tage mit
+Datum) – auch online, wenn der Server zu langsam war. Kommt die Verbindung zurück, lädt eine gespeicherte Liste
+oder Anzeigeseite von selbst den aktuellen Stand; Erfassungsseiten nicht, damit nichts verloren geht, was
+gerade eingegeben oder fotografiert wird. Ein ⚠ vor der Anzeige heißt „Vorrat unvollständig“ oder „Anmeldung
+nötig“.
 
 | Status | Bedeutung |
 |---|---|
@@ -222,7 +238,9 @@ darstellen kann.
 ## Grenzen
 
 * Offline verfügbar ist der Offline-Vorrat und alles, was online aufgerufen wurde – im Stand des letzten
-  Online-Aufrufs bzw. Vorrats (einmal je Sitzung, also z. B. bei der Anmeldung am Morgen).
+  Online-Aufrufs bzw. Vorrats (vollständig einmal je Sitzung, also z. B. bei der Anmeldung am Morgen; nach dem
+  Online-Speichern einer Erfassungsseite auch deren neuer Stand). Was die Disposition danach an einem schon
+  geladenen Datensatz ändert, kommt erst beim Öffnen oder mit „Vorrat neu laden“ aufs Gerät.
 * Offline funktionieren Textfelder, Auswahllisten, Optionsfelder, Schalter, Datum, Zahl, Unterschrift, Foto
   und Scan. Vorhandene Fotos erscheinen offline nur als Liste, das Protokoll nur online. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
   serverseitige Dynamic Actions, Regionen mit Lazy Loading.
@@ -358,6 +376,7 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 | Universal Theme: `.t-NavigationBar`, `#t_TreeNav`, `.t-Header-nav`, `#main`, `.t-Form-itemWrapper`, Druck-Klassen | Statusanzeige, Menülinks, Hinweis „Nur online“, Scan-Taste, Druck | 0, 1, 9, 12 |
 | Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
 | generierte `sw.js`: lädt die Hook-Datei per `importScripts` vor dem eigenen `fetch`-Listener; Hook `FUNCTION_VARIABLE_DECLARATION` mit `apex.sw.cleanAppCaches/cleanAPEXCaches`; `/i/` und `<app>/files/static/v…` aus dem eigenen Cache, alle anderen GET-Anfragen offline mit leerer Antwort | Seitenspeicher vor dem von APEX; alte Dateien behalten | 0, 1, 2, 9 |
+| Anmeldeseite = Passwortfeld und Seitenvorlage `t-PageBody--login` oder Weiterleitung auf einen anderen Pfad | Anmeldeseite nie speichern; Vorrat hält bei abgelaufener Sitzung an | 1, 8 |
 | Textdateien `wwv_flow.js_messages` / `js_dialogs` | gespeicherte Seiten offline vollständig | 2 |
 | `request.destination === "iframe"` im Service Worker (Übertragungsseite, APEX-Dialoge) | diese warten bis zu 30 s auf den Server statt 4 s | 6, 11 |
 | `#APEX_FILES#apex_version.txt` auf derselben Herkunft | Erreichbarkeitsprüfung (HEAD) | 2, 6 |

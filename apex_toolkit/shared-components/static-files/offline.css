@@ -6,6 +6,8 @@
     font: 600 12px/1.2 system-ui, sans-serif; color: #fff; background: #1e7d3c;
 }
 .offline-status.has-drafts { background: #a15c00; }
+/* Vorrat unvollständig oder Anmeldung nötig: Hinweiszeichen, die Farbe bleibt die des Zustands */
+.offline-status.has-warning::before { content: "\26A0\FE0E\00A0"; }
 .offline-status.is-offline { background: #b3261e; }
 .offline-status { max-width: 70vw; overflow: hidden; text-overflow: ellipsis; }
 .offline-status-item { display: flex; align-items: center; margin-inline-end: 8px; }

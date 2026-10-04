@@ -28,20 +28,30 @@ function pageKey(href) {                          // eine Seite = Pfad + fachlic
     return url.href;
 }
 
+// Anmeldeseite statt der verlangten Seite: Weiterleitung auf einen anderen Pfad oder Login-Seitenvorlage,
+// jeweils mit Passwortfeld (eine normale Seite mit Passwort-Item ist keine Anmeldeseite). Gleiche Regel in offline.js.
+function isLogin(response, html, key) {
+    return html.includes('type="password"') && (html.includes("t-PageBody--login")
+        || (response.redirected && new URL(response.url).pathname !== new URL(key).pathname));
+}
+
 async function remember(key, response, isPage) {
     if (!response.ok || response.type !== "basic") { return; }
-    if (isPage) {                                 // nur echte App-Seiten, keine Fehler-, Zeitzonen- oder Anmeldeseiten
-        const html = await response.clone().text();
-        if (!html.includes('id="wwvFlowForm"') || html.includes('type="password"')) { return; }
-    }
-    await (await caches.open(CACHE)).put(key, response);
+    const cache = await caches.open(CACHE);
+    if (!isPage) { await cache.put(key, response); return; }
+    const html = await response.text();          // nur echte App-Seiten, keine Fehler-, Zeitzonen- oder Anmeldeseiten
+    if (!html.includes('id="wwvFlowForm"') || isLogin(response, html, key)) { return; }
+    await cache.put(key, new Response(html, { headers: {
+        "Content-Type": "text/html; charset=utf-8", "x-offline-stored": String(Date.now())   // Stand für die Anzeige
+    } }));
 }
 
 async function fromCache(key, isPage) {
     const hit = await caches.match(key, { cacheName: CACHE });
     if (!hit || !isPage) { return hit; }
-    // Markierung für offline.js: Sitzung und Prüfsummen dieser Fassung sind veraltet
-    const html = (await hit.text()).replace(/<head[^>]*>/i, head => head + '<meta name="offline-copy" content="1">');
+    // Markierung für offline.js: Sitzung und Prüfsummen dieser Fassung sind veraltet; content = gespeichert um
+    const stored = hit.headers.get("x-offline-stored") || "";
+    const html = (await hit.text()).replace(/<head[^>]*>/i, head => head + '<meta name="offline-copy" content="' + stored + '">');
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
@@ -63,6 +73,8 @@ self.addEventListener("fetch", event => {
     const key = pageKey(request.url);
     const network = fetch(request);
     event.waitUntil(network.then(r => remember(key, r.clone(), isPage)).catch(() => {}));
+    // Vorrat: nur frisch vom Server - nie eine alte Fassung oder die Seite "Keine Verbindung" als geladen melden
+    if (request.headers.has("x-offline-prefetch")) { event.respondWith(network); return; }
     event.respondWith(networkFirst(key, network, isPage, request.destination === "iframe" ? PATIENT : TIMEOUT));
 });
 

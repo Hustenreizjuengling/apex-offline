@@ -27,7 +27,9 @@
     const BASE = location.pathname.replace(/[^/]*$/, "");                 // /ords/r/<workspace>/<app>/
     const CACHE = "offline-pages:" + BASE;                                // gleicher Name in offline-sw.js
     const VOLATILE = ["session", "cs", "clear", "success_msg", "tz", "debug"]; // gleiche Liste in offline-sw.js
-    const IS_COPY = !!document.querySelector('meta[name="offline-copy"]');  // Seite kam offline aus dem Cache
+    const COPY = document.querySelector('meta[name="offline-copy"]');    // Seite kam offline aus dem Cache
+    const IS_COPY = !!COPY;
+    const COPY_AT = COPY && Number(COPY.content) > 1e12 ? Number(COPY.content) : 0;   // gespeichert um (ab 1.9.0)
     const IN_FRAME = window !== window.top;                              // Dialogseite oder Übertragungsseite
     const CONTROLLED = !!(navigator.serviceWorker && navigator.serviceWorker.controller); // Seite lief schon über den Service Worker
     const VENDOR = (document.currentScript ? document.currentScript.src : "").replace(/[^/]*$/, "vendor/barcode-detector/");
@@ -51,10 +53,19 @@
     let bypass = false;      // einmal ohne Entwurf absenden (Entwurf ließ sich nicht speichern)
     let bypassed = false;
     let pickedAt = 0;        // zuletzt Kamera, Galerie oder Scanner geöffnet
+    let reloading = false;   // Seite lädt gleich neu: nichts mehr anstoßen
+    const STOCK_LIMIT = 300;                      // Offline-Vorrat: Seiten je Sitzung
+    const STOCK_LAST = "offline-stock-last:" + env.APP_ID;   // Ergebnis des letzten Vorrats, auch für gespeicherte Seiten
+    let stockState = null;                        // { at: zuletzt vollständig, complete, limit }
+    try { stockState = JSON.parse(localStorage.getItem(STOCK_LAST) || "null"); } catch (e) { stockState = null; }
+    const stockIncomplete = () => !!stockState && !stockState.complete;
 
     /* ---------- Hilfen ---------- */
 
     const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
+    const when = t => new Date(t).toDateString() === new Date().toDateString()      // heute "07:42", sonst "02.10., 16:10"
+        ? new Date(t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+        : new Date(t).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
     const say = text => apex.message.showPageSuccess(text);   // Aussehen: messages.css, Ausblenden: APEX (Auto-Dismiss)
     const isDelete = request => /DELETE/i.test(request || "");
     const saves = request => !!request && !apex.item(request).node;         // Enter- oder Auswahllisten-Submit speichert nicht
@@ -242,6 +253,10 @@
         if (unreachable(xhr)) { onSubmitLost(xhr.status, xhr.statusText === "timeout"); return; }
         // Online erfolgreich gespeichert: angewendeten Entwurf beim nächsten Seitenaufbau löschen
         if (draft && saves(lastRequest) && xhr.responseJSON && xhr.responseJSON.redirectURL) { sessionStorage.setItem("offline-done", draft.id); }
+        // gespeicherte Fassung dieser Seite auffrischen, sonst zeigt sie offline den Stand vor dem Speichern
+        if (saves(lastRequest) && !isDelete(lastRequest) && xhr.responseJSON && xhr.responseJSON.redirectURL) {
+            sessionStorage.setItem("offline-refetch", location.href.split("#")[0]);
+        }
     });
 
     /* ---------- Entwurf beim Öffnen einer Seite wieder einsetzen ---------- */
@@ -271,7 +286,7 @@
     /* ---------- 2. Übertragen: jeden Entwurf durch seine eigene Seite absenden ---------- */
 
     async function sync() {
-        if (syncing || !online || IN_FRAME) { return; }
+        if (syncing || !online || IN_FRAME || reloading) { return; }
         syncing = true;
         let sent = 0;
         const run = async () => {
@@ -316,6 +331,7 @@
             // neu laden zeigt den aktuellen Stand - nicht, wenn dabei etwas verloren ginge
             if (canReload()) {
                 sessionStorage.setItem("offline-flash", text);
+                reloading = true;
                 location.reload();
             } else {
                 say(text);
@@ -323,8 +339,9 @@
         }
     }
 
-    function resume() {                           // wartende Entwürfe senden, außer es fehlt die Anmeldung
-        if (!needLogin) { sync(); }
+    function resume() {                           // wartende Entwürfe senden, dann einen unterbrochenen Vorrat fortsetzen
+        if (needLogin || reloading) { return; }
+        sync().then(() => { if (stockIncomplete() && !stockState.limit && !reloading) { whenControlled(() => stock()); } });
     }
 
     function replay(d) {
@@ -419,8 +436,13 @@
         if (ok !== online) {
             online = ok;
             refresh();
-            // gespeicherte Fassung einer Seite nur für online: jetzt den aktuellen Inhalt laden
-            if (ok && IS_COPY && document.body.classList.contains("online-only")) { location.reload(); return ok; }
+            // Verbindung zurück auf einer gespeicherten Fassung: aktuellen Stand laden - bei Seiten nur für online
+            // immer, sonst nur, wenn dabei nichts verloren geht (nie auf Erfassungsseiten, z. B. mitten im Foto)
+            if (ok && IS_COPY && (document.body.classList.contains("online-only") || (!isForm() && canReload()))) {
+                reloading = true;
+                location.reload();
+                return ok;
+            }
             if (ok) { resume(); }
         }
         return ok;
@@ -438,11 +460,15 @@
         const list = await allDrafts();
         const keys = new Set(list.filter(d => !d.create).map(d => d.key));
         const parts = [online ? "Online" : "Offline"];
+        if (IS_COPY) { parts.push(COPY_AT ? "Stand " + when(COPY_AT) : "gespeicherte Seite"); }
         if (list.length) { parts.push(list.length + " offen"); }
         if (online && transmitting) { parts.push("sendet"); } else if (online && stocking) { parts.push("lädt"); }
+        const warn = (stockIncomplete() && !stocking) || (online && needLogin);
+        if (stockIncomplete() && !stocking) { parts.push(stockState.limit ? "Vorrat begrenzt" : "Vorrat unvollständig"); }
         if (online && needLogin) { parts.push("Anmeldung nötig"); }
         pill.classList.toggle("is-offline", !online);
         pill.classList.toggle("has-drafts", list.length > 0);
+        pill.classList.toggle("has-warning", warn);
         pill.textContent = parts.join(" · ");
         pill.title = pill.textContent;
         document.querySelectorAll("a[href]").forEach(a => {
@@ -461,7 +487,13 @@
         const dialog = document.createElement("dialog");
         dialog.className = "offline-panel";
         dialog.innerHTML = "<h2>Offline erfasst</h2>"
-            + `<p class="offline-stock">Offline verfügbar: ${stored} Seiten${stocking ? " (wird geladen …)" : ""}</p>`
+            + `<p class="offline-stock">Offline verfügbar: ${stored} Seiten`
+            + (stockState && stockState.at ? `, vollständig geladen ${when(stockState.at)}` : "")
+            + (stockState && stockState.dropped ? `, ${stockState.dropped} nicht abrufbar` : "")
+            + (stocking ? " (wird geladen …)" : !stockIncomplete() ? ""
+                : stockState.limit ? " – Grenze von " + STOCK_LIMIT + " Seiten erreicht" : " – Vorrat unvollständig, wird fortgesetzt")
+            + (!IS_COPY && online && !stocking ? ' <button type="button" class="t-Button t-Button--small" data-act="restock">Vorrat neu laden</button>' : "")
+            + "</p>"
             + (online && needLogin ? '<p class="offline-login">Die Sitzung ist abgelaufen. '
                 + '<button type="button" class="t-Button t-Button--hot t-Button--small" data-act="login">Anmelden und übertragen</button></p>' : "")
             + (list.length ? "<ul>" + list.map(d =>
@@ -500,6 +532,10 @@
                     .map(x => putDraft({ ...x, status: "wartet", info: "" })));
                 needLogin = false;
                 if (await check()) { sync(); } else { say("Server nicht erreichbar."); }
+            }
+            if (act === "restock") {              // alles neu vom Server, z. B. nach Änderungen der Disposition
+                dialog.close();
+                if (await check()) { whenControlled(() => stock(true)); } else { say("Server nicht erreichbar."); }
             }
             if (act === "close") { dialog.close(); }
         });
@@ -659,11 +695,15 @@
     }
 
     /* ---------- 3d. Offline-Vorrat: alle offline benötigten Seiten im Hintergrund laden ----------
-     * Einmal je Sitzung: alle Seiten des Navigationsmenüs und von dort aus (auch mehrstufig) alle Ziele von
-     * Links und Buttons in Regionen mit der CSS-Klasse offline-prefetch - z. B. jeder Auftrag der Liste und
-     * die Seite hinter "Neuer Auftrag". Der Service Worker speichert jede geladene Seite. */
+     * Je Sitzung: alle Seiten des Navigationsmenüs und von dort aus (auch mehrstufig) alle Ziele von Links und
+     * Buttons in Regionen mit der CSS-Klasse offline-prefetch - z. B. jeder Auftrag der Liste und die Seite
+     * hinter "Neuer Auftrag". Der Service Worker speichert jede geladene Seite. Ein unterbrochener Vorrat merkt
+     * sich, wo er stand, und macht dort weiter; Seiten, die nicht kamen, versucht er erneut. */
 
-    const STOCK_LIMIT = 300;
+    function isLogin(res, html, href) {           // gleiche Regel in offline-sw.js
+        return html.includes('type="password"') && (html.includes("t-PageBody--login")
+            || (res.redirected && new URL(res.url).pathname !== new URL(href).pathname));
+    }
 
     function targets(doc) {                       // Ziele der Links und Buttons in offline-prefetch-Regionen
         const urls = [...doc.querySelectorAll(".offline-prefetch a[href]")].map(a => a.getAttribute("href"));
@@ -676,39 +716,71 @@
         return urls;
     }
 
-    async function stock() {
-        if (stocking) { return; }
+    async function stock(fresh) {                 // fresh: alles neu laden ("Vorrat neu laden")
+        if (stocking || needLogin || IS_COPY || env.APP_USER === "nobody") { return; }
         stocking = true;
         refresh();
-        const key = "offline-stock:" + env.APP_SESSION;           // bereits geladene Seiten dieser Sitzung
-        const seen = new Set(JSON.parse(sessionStorage.getItem(key) || "[]"));
-        if (CONTROLLED) { seen.add(pageKey(location.href)); }   // diese Seite hat der Service Worker schon gespeichert
-        const queue = [location.href, ...[...document.querySelectorAll("#t_TreeNav a[href], .t-Header-nav a[href]")]
+        const key = "offline-stock:" + env.APP_SESSION;           // Stand des Vorrats in dieser Sitzung
+        let saved = {};
+        try { saved = fresh ? {} : JSON.parse(sessionStorage.getItem(key) || "{}"); } catch (e) { saved = {}; }
+        if (Array.isArray(saved)) { saved = { seen: saved }; }    // Format bis 1.8
+        const seen = new Set(saved.seen || []);
+        if (CONTROLLED && !fresh) { seen.add(pageKey(location.href)); }   // diese Seite hat der Service Worker schon gespeichert
+        const queue = [...(saved.rest || []), location.href, ...[...document.querySelectorAll("#t_TreeNav a[href], .t-Header-nav a[href]")]
             .map(a => a.getAttribute("href")), ...targets(document)];
-        let decoder = !!document.querySelector(".offline-scan");
-        for (let loaded = 0; queue.length && loaded < STOCK_LIMIT;) {
+        const failed = new Set();                 // in diesem Durchlauf nicht gekommen: beim nächsten Mal erneut
+        const tries = saved.tries || {};          // Fehlversuche je Seite in dieser Sitzung
+        const dropped = new Set(saved.dropped || []);   // nach 3 Fehlversuchen: nicht abrufbar, kein weiterer Versuch
+        const fail = href => {
+            tries[href] = (tries[href] || 0) + 1;
+            if (tries[href] >= 3) { dropped.add(href); } else { failed.add(href); }
+        };
+        let decoder = !!saved.decoder || !!document.querySelector(".offline-scan");
+        let stopped = false, limit = false;
+        const keep = () => {
+            try { sessionStorage.setItem(key, JSON.stringify({ seen: [...seen], rest: [...failed, ...queue], decoder, tries, dropped: [...dropped] })); } catch (e) { /* voll: weiter ohne */ }
+        };
+        while (queue.length) {
             let url;
-            try { url = new URL(queue.shift(), document.baseURI); } catch (e) { continue; }
+            try { url = new URL(queue[0], document.baseURI); } catch (e) { queue.shift(); continue; }
             // nur Seiten dieser App und nie Links mit Request (die könnten auf der Zielseite etwas auslösen)
-            if (!url.href.startsWith(location.origin + BASE) || url.searchParams.has("request") || seen.has(pageKey(url.href))) { continue; }
-            let html;
-            try { html = await (await fetch(url.href, { headers: { "x-offline-prefetch": "1" } })).text(); } catch (e) { break; }
+            if (!url.href.startsWith(location.origin + BASE) || url.searchParams.has("request")
+                || seen.has(pageKey(url.href)) || failed.has(url.href) || dropped.has(url.href)) { queue.shift(); continue; }
+            if (seen.size >= STOCK_LIMIT) { limit = true; break; }
+            let res, html;
+            try {
+                res = await fetch(url.href, { headers: { "x-offline-prefetch": "1" }, signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined });
+                html = await res.text();
+            } catch (e) {
+                // nur diese Seite zu langsam oder fehlerhaft: später erneut; Verbindung weg: hier später weitermachen
+                if ((e && e.name === "TimeoutError") || await check()) { queue.shift(); fail(url.href); keep(); continue; }
+                stopped = true;
+                break;
+            }
+            if (isLogin(res, html, url.href)) { needLogin = true; stopped = true; break; }   // Sitzung abgelaufen
+            queue.shift();
+            if (!res.ok || !html.includes('id="wwvFlowForm"')) { fail(url.href); keep(); continue; }   // Fehlerseite
             seen.add(pageKey(url.href));
-            sessionStorage.setItem(key, JSON.stringify([...seen]));
-            loaded++;
             decoder = decoder || html.includes("offline-scan");
             queue.push(...targets(new DOMParser().parseFromString(html, "text/html")));
+            keep();
         }
-        if (decoder && !window.BarcodeDetector) {   // Barcode-Decoder für offline vorhalten
-            await Promise.all(["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"].map(f => fetch(VENDOR + f).catch(() => {})));
+        let decoderOk = true;
+        if (decoder && !window.BarcodeDetector && !stopped) {   // Barcode-Decoder für offline vorhalten (iPhone, Windows, Firefox)
+            decoderOk = (await Promise.all(["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"]
+                .map(f => fetch(VENDOR + f).then(r => r.ok, () => false)))).every(Boolean);
         }
+        keep();
+        const complete = !stopped && !limit && !failed.size && decoderOk;
+        stockState = { at: complete ? Date.now() : (stockState && stockState.at) || 0, complete, limit, dropped: dropped.size };
+        try { localStorage.setItem(STOCK_LAST, JSON.stringify(stockState)); } catch (e) { /* ohne Anzeige weiter */ }
         stocking = false;
         refresh();
     }
 
     function whenControlled(fn) {                 // erst wenn der Service Worker die Seite kontrolliert, speichert er mit
         if (!navigator.serviceWorker) { return; }
-        if (navigator.serviceWorker.controller) { fn(); } else { navigator.serviceWorker.addEventListener("controllerchange", fn, { once: true }); }
+        if (navigator.serviceWorker.controller) { fn(); } else { navigator.serviceWorker.addEventListener("controllerchange", () => fn(), { once: true }); }
     }
 
     /* ---------- Start ---------- */
@@ -735,7 +807,11 @@
         // Anderer Benutzer auf diesem Gerät: gespeicherte Seiten des Vorgängers verwerfen
         if (!IS_COPY && env.APP_USER !== "nobody") {
             const userKey = "offline-user-" + env.APP_ID;
-            if (localStorage.getItem(userKey) && localStorage.getItem(userKey) !== env.APP_USER) { caches.delete(CACHE); }
+            if (localStorage.getItem(userKey) && localStorage.getItem(userKey) !== env.APP_USER) {
+                caches.delete(CACHE);
+                localStorage.removeItem(STOCK_LAST);
+                stockState = null;
+            }
             localStorage.setItem(userKey, env.APP_USER);
         }
         const navBar = document.querySelector(".t-NavigationBar");   // Kopfleiste neben dem Benutzer
@@ -758,8 +834,22 @@
         }
         await refresh();
         if (await check()) {
+            if (IS_COPY && (document.body.classList.contains("online-only") || (!isForm() && canReload()))) {
+                const retry = "offline-retry:" + pageKey(location.href);
+                if (Date.now() - Number(sessionStorage.getItem(retry) || 0) > 60000) {
+                    sessionStorage.setItem(retry, String(Date.now()));
+                    reloading = true;
+                    location.reload();
+                    return;
+                }
+            }
+            const again = sessionStorage.getItem("offline-refetch");   // online gespeichert: neuen Stand speichern
+            if (again && !IS_COPY) {
+                sessionStorage.removeItem("offline-refetch");
+                whenControlled(() => fetch(liveUrl(again), { headers: { "x-offline-prefetch": "1" } }).catch(() => {}));
+            }
             await sync();                         // erst Offline-Erfasstes übertragen, dann den Vorrat auffrischen
-            if (!IS_COPY && env.APP_USER !== "nobody") { whenControlled(stock); }
+            whenControlled(() => stock());
         }
     });
 
@@ -772,8 +862,9 @@
         // Zurück aus dem Back/Forward-Cache (z. B. nach dem Speichern): apexreadyend läuft dann nicht
         window.addEventListener("pageshow", event => { if (event.persisted) { flash(); refresh(); again(); } });
         setInterval(async () => {
-            if (document.visibilityState !== "visible" || !(await check()) || syncing || needLogin || Date.now() < nextTry) { return; }
-            if ((await allDrafts()).some(d => d.status === "wartet")) { nextTry = Date.now() + 120000; sync(); }   // höchstens alle 2 Minuten
+            if (document.visibilityState !== "visible" || !(await check()) || syncing || stocking || needLogin || Date.now() < nextTry) { return; }
+            const waiting = (await allDrafts()).some(d => d.status === "wartet");
+            if (waiting || (stockIncomplete() && !stockState.limit && !IS_COPY)) { nextTry = Date.now() + 120000; resume(); }   // höchstens alle 2 Minuten
         }, 30000);
     }
 })(window.apex, window.apex && window.apex.jQuery);
