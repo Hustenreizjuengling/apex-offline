@@ -15,6 +15,9 @@
  *        offline-scan        Textfeld bekommt eine Kamera-Taste für Barcode und QR-Code
  *        offline-prefetch    (Region) Ziele ihrer Links und Buttons werden im Hintergrund offline verfügbar
  *                            gemacht - zusammen mit allen Seiten des Navigationsmenüs (Offline-Vorrat)
+ *        offline-drafts      (Region) zeigt die noch nicht übertragenen Neuanlagen der Seiten, auf die ihre Links
+ *                            und Buttons zeigen - z. B. am Auftrag die Fotos hinter "Foto hinzufügen"
+ *        offline-lightbox    (Region) Klick auf ein Bild zeigt es groß
  *   4. Seiten nur für online (Page > Appearance > CSS Classes: online-only): ohne Verbindung zeigen sie
  *      statt des Inhalts einen Hinweis (offline.css), mit Verbindung wieder den aktuellen Inhalt.
  * Die Seiten selbst speichert offline-sw.js (Service Worker) bei jedem Online-Aufruf.
@@ -54,6 +57,9 @@
     let bypassed = false;
     let pickedAt = 0;        // zuletzt Kamera, Galerie oder Scanner geöffnet
     let reloading = false;   // Seite lädt gleich neu: nichts mehr anstoßen
+    let leaving = false;     // Seite wird verlassen: abgebrochene Anfragen sind dann kein Fehler
+    window.addEventListener("pagehide", () => { leaving = true; });
+    window.addEventListener("pageshow", () => { leaving = false; });
     const STOCK_LIMIT = 300;                      // Offline-Vorrat: Seiten je Sitzung
     const STOCK_LAST = "offline-stock-last:" + env.APP_ID;   // Ergebnis des letzten Vorrats, auch für gespeicherte Seiten
     let stockState = null;                        // { at: zuletzt vollständig, complete, limit }
@@ -63,6 +69,8 @@
     /* ---------- Hilfen ---------- */
 
     const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
+    const picture = d => Object.values(d.items).map(i => i.val)    // Foto im Entwurf (offline-photo), nicht die Unterschrift
+        .find(v => typeof v === "string" && /^data:image\/(jpeg|webp);base64,/.test(v));
     const when = t => new Date(t).toDateString() === new Date().toDateString()      // heute "07:42", sonst "02.10., 16:10"
         ? new Date(t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
         : new Date(t).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -476,14 +484,13 @@
             try { key = pageKey(a.href); } catch (e) { /* kein Seitenlink */ }
             a.classList.toggle("offline-pending", keys.has(key));
         });
+        showDrafts(list);
     }
 
     async function openPanel() {
         const list = await allDrafts();
         const esc = apex.util.escapeHTML;
         const stored = (await (await caches.open(CACHE)).keys()).filter(r => r.url.startsWith(location.origin + BASE)).length;
-        const picture = d => Object.values(d.items).map(i => i.val)     // Vorschau für Foto-Entwürfe
-            .find(v => typeof v === "string" && /^data:image\/(jpeg|webp);base64,/.test(v));
         const dialog = document.createElement("dialog");
         dialog.className = "offline-panel";
         dialog.innerHTML = "<h2>Offline erfasst</h2>"
@@ -705,16 +712,17 @@
             || (res.redirected && new URL(res.url).pathname !== new URL(href).pathname));
     }
 
-    function targets(doc) {                       // Ziele der Links und Buttons in offline-prefetch-Regionen
-        const urls = [...doc.querySelectorAll(".offline-prefetch a[href]")].map(a => a.getAttribute("href"));
+    function targetsIn(roots, doc) {              // Ziele der Links und Buttons in diesen Elementen
+        const urls = roots.flatMap(r => [...r.querySelectorAll("a[href]")].map(a => a.getAttribute("href")));
         const scripts = [...doc.querySelectorAll("script:not([src])")].map(s => s.textContent).join("\n");
-        doc.querySelectorAll(".offline-prefetch button[id]").forEach(b => {
+        roots.forEach(r => r.querySelectorAll("button[id]").forEach(b => {
             // APEX bindet das Ziel eines Buttons per Skript: apex.jQuery("#B123").on("click", ... redirect('...'))
             const m = scripts.match(new RegExp('"#' + b.id + '"[^]{0,120}?navigation\\.redirect\\(\'([^\']+)\''));
             if (m) { try { urls.push(JSON.parse('"' + m[1] + '"')); } catch (e) { /* anderes Format: überspringen */ } }
-        });
+        }));
         return urls;
     }
+    const targets = doc => targetsIn([...doc.querySelectorAll(".offline-prefetch")], doc);   // für den Vorrat
 
     async function stock(fresh) {                 // fresh: alles neu laden ("Vorrat neu laden")
         if (stocking || needLogin || IS_COPY || env.APP_USER === "nobody") { return; }
@@ -736,15 +744,18 @@
             if (tries[href] >= 3) { dropped.add(href); } else { failed.add(href); }
         };
         let decoder = !!saved.decoder || !!document.querySelector(".offline-scan");
+        let decoderOk = !!saved.decoderOk;        // Decoder in dieser Sitzung schon geholt
         let stopped = false, limit = false;
         const keep = () => {
-            try { sessionStorage.setItem(key, JSON.stringify({ seen: [...seen], rest: [...failed, ...queue], decoder, tries, dropped: [...dropped] })); } catch (e) { /* voll: weiter ohne */ }
+            try { sessionStorage.setItem(key, JSON.stringify({ seen: [...seen], rest: [...failed, ...queue], decoder, decoderOk, tries, dropped: [...dropped] })); } catch (e) { /* voll: weiter ohne */ }
         };
         while (queue.length) {
             let url;
             try { url = new URL(queue[0], document.baseURI); } catch (e) { queue.shift(); continue; }
-            // nur Seiten dieser App und nie Links mit Request (die könnten auf der Zielseite etwas auslösen)
-            if (!url.href.startsWith(location.origin + BASE) || url.searchParams.has("request")
+            // nur Seiten dieser App (keine Downloads wie apex_util.get_blob - Bilder vom Server lädt der Vorrat nie)
+            // und nie Links mit Request (die könnten auf der Zielseite etwas auslösen)
+            if (!url.href.startsWith(location.origin + BASE) || url.pathname.slice(BASE.length).includes(".")
+                || url.searchParams.has("request")
                 || seen.has(pageKey(url.href)) || failed.has(url.href) || dropped.has(url.href)) { queue.shift(); continue; }
             if (seen.size >= STOCK_LIMIT) { limit = true; break; }
             let res, html;
@@ -752,6 +763,7 @@
                 res = await fetch(url.href, { headers: { "x-offline-prefetch": "1" }, signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined });
                 html = await res.text();
             } catch (e) {
+                if (leaving) { break; }           // Seite gewechselt: der nächste Aufruf macht hier weiter
                 // nur diese Seite zu langsam oder fehlerhaft: später erneut; Verbindung weg: hier später weitermachen
                 if ((e && e.name === "TimeoutError") || await check()) { queue.shift(); fail(url.href); keep(); continue; }
                 stopped = true;
@@ -765,18 +777,106 @@
             queue.push(...targets(new DOMParser().parseFromString(html, "text/html")));
             keep();
         }
-        let decoderOk = true;
-        if (decoder && !window.BarcodeDetector && !stopped) {   // Barcode-Decoder für offline vorhalten (iPhone, Windows, Firefox)
+        if (decoder && !decoderOk && !window.BarcodeDetector && !stopped && !leaving) {   // Barcode-Decoder für offline (iPhone, Windows, Firefox)
             decoderOk = (await Promise.all(["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"]
                 .map(f => fetch(VENDOR + f).then(r => r.ok, () => false)))).every(Boolean);
         }
+        if (leaving) { stocking = false; return; }   // kein Ergebnis melden: die Seite ist weg
         keep();
-        const complete = !stopped && !limit && !failed.size && decoderOk;
+        const complete = !stopped && !limit && !failed.size && (decoderOk || !decoder || !!window.BarcodeDetector);
         stockState = { at: complete ? Date.now() : (stockState && stockState.at) || 0, complete, limit, dropped: dropped.size };
         try { localStorage.setItem(STOCK_LAST, JSON.stringify(stockState)); } catch (e) { /* ohne Anzeige weiter */ }
         stocking = false;
         refresh();
     }
+
+    /* ---------- 3e. Offene Neuanlagen am Ort: Region mit der CSS-Klasse offline-drafts ----------
+     * Zeigt die noch nicht übertragenen Neuanlagen der Seiten, auf die Links und Buttons der Region zeigen - am
+     * Auftrag also die Fotos hinter "Foto hinzufügen", in der Liste die offline angelegten Aufträge. Sie liegen
+     * ohnehin auf dem Gerät; nichts davon kommt vom Server. */
+
+    const STATES = { wartet: "noch nicht übertragen", sendet: "wird übertragen", fehler: "abgelehnt", konflikt: "Konflikt", unklar: "unklar" };
+    let shown = "";                               // zuletzt gezeigter Stand, damit nichts unnötig neu gezeichnet wird
+    let pictureUrls = [];
+
+    function blobUrl(dataUrl) {                   // Foto als Blob-Adresse statt als langer Data-URL-Text im DOM
+        const comma = dataUrl.indexOf(",");
+        const bytes = Uint8Array.from(atob(dataUrl.slice(comma + 1)), c => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: dataUrl.slice(5, dataUrl.indexOf(";")) }));
+        pictureUrls.push(url);
+        return url;
+    }
+
+    function showDrafts(list) {
+        const regions = [...document.querySelectorAll(".offline-drafts")];
+        const state = list.filter(d => d.create).map(d => d.id + d.status + d.ts).join();
+        if (!regions.length || state === shown) { return; }
+        shown = state;
+        pictureUrls.forEach(u => URL.revokeObjectURL(u));
+        pictureUrls = [];
+        regions.forEach(region => {
+            const keys = new Set(targetsIn([region], document).map(h => { try { return pageKey(h); } catch (e) { return ""; } }));
+            const mine = list.filter(d => d.create && keys.has(d.key));
+            const body = region.querySelector(".t-Region-body") || region;
+            let box = [...body.children].find(e => e.classList.contains("offline-drafts-list"));
+            if (!mine.length) { if (box) { box.remove(); } return; }
+            if (!box) { box = document.createElement("ul"); box.className = "offline-drafts-list"; body.prepend(box); }
+            box.replaceChildren(...mine.map(d => {
+                const li = document.createElement("li");
+                const src = picture(d);
+                if (src) {
+                    const img = document.createElement("img");
+                    img.alt = d.title;
+                    try { img.src = blobUrl(src); } catch (e) { img.src = src; }
+                    li.append(img);
+                }
+                const title = document.createElement("span");
+                title.textContent = d.title;
+                const status = document.createElement("small");
+                status.className = "is-" + d.status;
+                status.textContent = STATES[d.status] || d.status;
+                li.append(title, status);
+                return li;
+            }));
+        });
+    }
+
+    /* ---------- 3f. Bilder groß ansehen: Region mit der CSS-Klasse offline-lightbox (und offene Fotos) ---------- */
+
+    document.addEventListener("click", event => {
+        const img = event.target.closest && event.target.closest(".offline-lightbox img, .offline-drafts-list img");
+        if (!img || img.hidden || !img.naturalWidth) { return; }
+        event.preventDefault();
+        const viewer = document.createElement("dialog");
+        viewer.className = "offline-viewer";
+        const big = document.createElement("img");
+        big.src = img.currentSrc || img.src;
+        big.alt = img.alt;
+        const caption = document.createElement("p");
+        caption.textContent = ((img.closest("tr, li") || {}).innerText || img.alt || "").replace(/\s+/g, " ").trim();
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "t-Button t-Button--small";
+        close.textContent = "Schließen";
+        viewer.append(big, caption, close);
+        viewer.addEventListener("click", () => viewer.close());   // Klick irgendwo schließt
+        viewer.addEventListener("close", () => viewer.remove());
+        document.body.append(viewer);
+        viewer.showModal();
+    });
+
+    /* ---------- 3g. Bild nicht verfügbar: offline oder auf einer gespeicherten Seite Hinweis statt kaputtem Bild ---------- */
+
+    function unavailable(img) {
+        if ((online && !IS_COPY) || img.dataset.offlineMissing || /^(blob|data):/.test(img.getAttribute("src") || "")) { return; }
+        img.dataset.offlineMissing = "1";
+        img.hidden = true;
+        const note = document.createElement("span");
+        note.className = "offline-missing";
+        note.textContent = "Bild nur online";
+        img.after(note);
+    }
+    document.addEventListener("error", event => { if (event.target instanceof HTMLImageElement) { unavailable(event.target); } }, true);
 
     function whenControlled(fn) {                 // erst wenn der Service Worker die Seite kontrolliert, speichert er mit
         if (!navigator.serviceWorker) { return; }
@@ -796,6 +896,7 @@
         document.querySelectorAll(".offline-signature").forEach(signaturePad);
         document.querySelectorAll(".offline-photo").forEach(photoField);
         document.querySelectorAll(".offline-scan").forEach(scanButton);
+        document.querySelectorAll("img[src]").forEach(img => { if (img.complete && !img.naturalWidth) { unavailable(img); } });
         const done = sessionStorage.getItem("offline-done");
         if (done) { sessionStorage.removeItem("offline-done"); await deleteDraft(done); }
         if (isForm()) {

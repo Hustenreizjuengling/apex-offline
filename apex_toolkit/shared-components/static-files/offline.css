@@ -40,6 +40,28 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 .offline-photo-box img { display: block; max-width: 100%; max-height: 240px; margin-bottom: 8px; border-radius: 4px; }
 .offline-photo-box label { cursor: pointer; }
 
+/* Offene Neuanlagen am Ort (Region mit offline-drafts), z. B. noch nicht übertragene Fotos am Auftrag */
+.offline-drafts-list { list-style: none; display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 12px; padding: 0; }
+.offline-drafts-list li { display: flex; flex-direction: column; gap: 2px; max-width: 160px; font-size: .8rem; }
+.offline-drafts-list img { width: 120px; height: 90px; object-fit: cover; border: 2px dashed #a15c00; border-radius: 4px; }
+.offline-drafts-list small { color: #a15c00; font-weight: 600; }
+.offline-drafts-list .is-fehler, .offline-drafts-list .is-konflikt, .offline-drafts-list .is-unklar { color: #b3261e; }
+
+/* Bilder groß ansehen (Region mit offline-lightbox) */
+.offline-lightbox img, .offline-drafts-list img { cursor: zoom-in; }
+.offline-viewer { max-width: 96vw; max-height: 96vh; padding: 8px; border: 0; border-radius: 8px; background: #111; color: #fff; text-align: center; }
+.offline-viewer::backdrop { background: rgba(0, 0, 0, .8); }
+.offline-viewer img { display: block; max-width: calc(96vw - 16px); max-height: calc(96vh - 96px); margin: 0 auto; }
+.offline-viewer p { margin: 8px 0; font-size: .9rem; }
+.offline-viewer button { color: #111; background: #fff; }
+
+/* Bild offline nicht verfügbar: das kaputte Bild verschwinden lassen, auch wenn Seiten-CSS display setzt */
+img[data-offline-missing] { display: none !important; }
+.offline-missing {
+    display: inline-flex; align-items: center; justify-content: center; min-width: 96px; min-height: 72px;
+    padding: 4px 8px; border: 1px dashed #888; border-radius: 4px; color: #666; font-size: .8rem; text-align: center;
+}
+
 /* Barcode/QR-Scanner: Taste rechts im Feld wie beim Datumsfeld (UT sortiert das Eingabefeld mit order: 3) */
 .t-Form-itemWrapper > .offline-scan-button { order: 4; margin: 0; min-width: 44px; border-radius: 0 4px 4px 0; box-shadow: none; }
 .offline-scan-overlay {

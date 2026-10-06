@@ -101,6 +101,8 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
     const field = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE", permissions: ["camera"] });   // Techniker
     const office = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });  // Büro, immer online
     const page = await field.newPage();
+    const blobRequests = [];                                       // Bilder vom Server (apex_util.get_blob)
+    field.on("request", r => { if (/get_blob/.test(r.url())) { blobRequests.push(r.url()); } });
     const errors = [];
     page.on("pageerror", e => errors.push(e.message));
     page.on("dialog", d => d.accept());
@@ -144,10 +146,12 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         const stockLine = await page.locator(".offline-panel .offline-stock").innerText();
         await page.locator(".offline-panel [data-act=close]").click();
         check(!/unvollständig/.test(await pill(page)) && /vollständig geladen/.test(stockLine), "Vorrat als vollständig gemeldet: " + stockLine);
+        check(blobRequests.length === 0, "Vorrat lädt keine Bilder vom Server" + (blobRequests.length ? ": " + blobRequests.length : ""));
 
         console.log("1b. Vorrat unterbrochen: Verbindung weg mitten im Laden, danach ohne Klick vervollständigt");
         const cutCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });
         const cut = await cutCtx.newPage();
+        cutCtx.on("request", r => { if (/get_blob/.test(r.url())) { blobRequests.push(r.url()); } });
         cut.on("pageerror", e => errors.push(e.message));
         cut.on("dialog", d => d.accept());
         await login(cut);
@@ -174,6 +178,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await waitFor(async () => /lädt/.test(await pill(cut).catch(() => "")), 10000, "neu laden").catch(() => {});
         await waitFor(async () => !/lädt|unvollständig/.test(await pill(cut).catch(() => "lädt")), 60000, "neu geladen");
         check(true, "„Vorrat neu laden“ lädt alles erneut, Anzeige: " + await pill(cut));
+        check(blobRequests.length === 0, "auch der unterbrochene und neu geladene Vorrat lädt keine Bilder");
         await cutCtx.close();
 
         console.log("2. Offline: Liste und nie geöffneter Auftrag kommen aus dem Cache");
@@ -218,6 +223,8 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Anlegen" }).click()]);
         await waitFor(async () => /2 offen/.test(await pill(page)), 10000, "2 offen");
         check(/2 offen/.test(await pill(page)), "Neuanlage gespeichert, Anzeige: " + await pill(page));
+        check(/noch nicht übertragen/.test(await page.locator(".offline-drafts-list li", { hasText: RUN }).innerText().catch(() => "")),
+            "offline angelegter Auftrag in der Liste sichtbar (offline-drafts)");
 
         console.log("5. Konflikt vorbereiten: offline A-1002 ändern, im Büro gleichzeitig dasselbe Feld");
         await openOrder(page, "A-1002");
@@ -360,6 +367,16 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.fill("#P4_BEMERKUNG", "Beschädigt " + RUN);
         await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
         await waitFor(async () => /3 offen/.test(await pill(page)), 10000, "3 offen");
+        const pending = page.locator(".oe-fotos .offline-drafts-list li");
+        await waitFor(async () => await pending.count() === 3, 10000, "offene Fotos am Auftrag").catch(() => {});
+        const firstPending = pending.first().locator("img");
+        const pendingWidth = await firstPending.evaluate(async img => { await img.decode().catch(() => {}); return img.naturalWidth; }).catch(() => 0);
+        check(await pending.count() === 3 && pendingWidth === 1600, `offline: ${await pending.count()} noch nicht übertragene Fotos am Auftrag, aus dem Gerät (${pendingWidth} px)`);
+        await firstPending.click();
+        const viewerWidth = await page.locator(".offline-viewer img").evaluate(async img => { await img.decode().catch(() => {}); return img.naturalWidth; }).catch(() => 0);
+        check(viewerWidth === 1600, "offline: Klick zeigt das Foto groß (" + viewerWidth + " px)");
+        await page.locator(".offline-viewer").click();
+        await page.locator(".offline-viewer").waitFor({ state: "detached" });
         const savedDraft = await page.evaluate(async note => {     // für 11e: Entwurf, wie er auf dem Gerät lag
             const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
             const all = await new Promise(r => { const q = db.transaction("drafts").objectStore("drafts").getAll(); q.onsuccess = () => r(q.result); });
@@ -385,7 +402,26 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await openOrder(page, RUN);
         const listed = await page.locator(".oe-fotos").innerText();
         check(listed.includes("Typenschild " + RUN) && !(await page.content()).includes("data:image/jpeg"),
-            "Foto am Auftrag als Liste, ohne Bilddaten in der Seite");
+            "Foto am Auftrag in der Liste, ohne Bilddaten in der Seite");
+        const thumb = page.locator(".oe-fotos td img").first();
+        await thumb.scrollIntoViewIfNeeded();                       // Bildspalte lädt "lazy"
+        const thumbInfo = await thumb.evaluate(async img => { await img.decode().catch(() => {}); return { w: img.naturalWidth, shown: img.getBoundingClientRect().width }; }).catch(() => ({ w: 0, shown: 0 }));
+        check(thumbInfo.w === 1600 && thumbInfo.shown <= 100, `online: Vorschaubild vom Server (${thumbInfo.w} px, angezeigt ${Math.round(thumbInfo.shown)} px)`);
+        await thumb.click();
+        const serverViewer = await page.locator(".offline-viewer img").evaluate(async img => { await img.decode().catch(() => {}); return img.naturalWidth; }).catch(() => 0);
+        check(serverViewer === 1600, "online: Klick zeigt das Foto vom Server groß");
+        await page.locator(".offline-viewer").click();
+        await field.setOffline(true);
+        await page.reload();
+        await page.waitForSelector(".offline-status");
+        await page.locator(".oe-fotos").scrollIntoViewIfNeeded();    // erst sichtbar versucht der Browser das Bild
+        await waitFor(async () => await page.locator(".oe-fotos .offline-missing").count() > 0, 10000, "Platzhalter").catch(() => {});
+        check(await page.locator(".oe-fotos .offline-missing").first().isVisible().catch(() => false) && !(await page.locator(".oe-fotos td img").first().isVisible()),
+            "offline: übertragenes Foto mit Hinweis „" + (await page.locator(".oe-fotos .offline-missing").first().innerText().catch(() => "?")) + "“ statt kaputtem Bild");
+        await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        await gotoList(page);
+        await openOrder(page, RUN);
 
         console.log("11c. Großes Foto online (gut 1 MB als Data-URL): Grenze für Formular-POSTs");
         await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);

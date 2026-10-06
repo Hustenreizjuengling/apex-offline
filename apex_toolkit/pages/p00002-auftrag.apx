@@ -10,6 +10,12 @@ page 2 (
     navigation {
         cursorFocus: doNotFocusCursor
     }
+    css {
+        inline:
+            ```css
+            .oe-fotos td img { display: block; width: 96px; height: 72px; object-fit: cover; border-radius: 4px; }
+            ```
+    }
     security {
         pageAccessProtection: argumentsMustHaveChecksum
         formAutoComplete: false
@@ -35,7 +41,8 @@ page 2 (
         }
     )
 
-    // Fotos nur als Liste: gespeicherte Offline-Seiten tragen keine Bilddaten (Bilder zeigt das Protokoll online)
+    // Vorschaubilder vom Server nur online (gespeicherte Offline-Seiten tragen keine Bilddaten), noch nicht
+    // übertragene Fotos zeigt offline-drafts aus dem Gerät; Klick auf ein Bild zeigt es groß (offline-lightbox)
     region fotos (
         name: Fotos
         type: classicReport
@@ -44,7 +51,9 @@ page 2 (
             type: sqlQuery
             sqlQuery:
                 ```sql
-                select bemerkung,
+                select id,
+                       dbms_lob.getlength(bild) as bild,
+                       bemerkung,
                        to_char(created_at, 'DD.MM.YYYY HH24:MI') as gespeichert,
                        created_by as von
                   from oe_auftrag_foto
@@ -61,6 +70,8 @@ page 2 (
             templateOptions: #DEFAULT#
             cssClasses: [
                 offline-prefetch
+                offline-drafts
+                offline-lightbox
                 oe-fotos
             ]
         }
@@ -79,6 +90,28 @@ page 2 (
             item: P2_ID
         }
 
+        column ID (
+            type: hidden
+            layout {
+                sequence: 5
+            }
+        )
+        column BILD (
+            type: displayImage
+            heading {
+                heading: Foto
+            }
+            layout {
+                sequence: 8
+            }
+            blobAttributes {
+                tableName: OE_AUFTRAG_FOTO
+                blobColumn: BILD
+                primaryKeyColumn1: ID
+                mimeTypeColumn: MIME_TYPE
+                lastUpdatedColumn: UPDATED_AT
+            }
+        )
         column BEMERKUNG (
             type: plainText
             heading {

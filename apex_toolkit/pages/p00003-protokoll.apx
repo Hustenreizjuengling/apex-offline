@@ -327,7 +327,10 @@ page 3 (
         appearance {
             template: @/standard
             templateOptions: #DEFAULT#
-            cssClasses: oe-fotos
+            cssClasses: [
+                oe-fotos
+                offline-lightbox
+            ]
         }
         reportLayout {
             numberOfRows: 100

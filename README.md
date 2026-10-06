@@ -104,6 +104,8 @@ sie zurück, lädt die Seite ihren aktuellen Inhalt. Eine gespeicherte Fassung z
 | `offline-photo` | Textarea-Item → Advanced → CSS Classes | Fotofeld: Kamera oder Galerie, Vorschau; das Bild wird im Browser auf höchstens 1600 Pixel verkleinert und ist als JPEG-Data-URL der Wert des Items (keine Formularspalte; Session State Data Type CLOB, Storage *Per Request*). Ein Prozess speichert es als Bild, siehe [Fotos am Auftrag](#fotos-am-auftrag) |
 | `offline-scan` | Textfeld-Item → Advanced → CSS Classes | Kamera-Taste für Barcode und QR-Code; Hand- und Bluetooth-Scanner tippen ohnehin ins Feld |
 | `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | die Ziele ihrer Links und Buttons gehören zum Offline-Vorrat (siehe unten) |
+| `offline-drafts` | Region → Appearance → CSS Classes | zeigt oben in der Region die noch nicht übertragenen Neuanlagen der Seiten, auf die ihre Links und Buttons zeigen – mit Vorschaubild, wenn es ein Foto ist, und Status. Am Auftrag also die Fotos hinter „Foto hinzufügen“, in der Liste die offline angelegten Aufträge. Alles kommt aus dem Gerät, nichts vom Server |
+| `offline-lightbox` | Region → Appearance → CSS Classes | Klick auf ein Bild in der Region zeigt es groß (auch die Vorschaubilder von `offline-drafts`) |
 
 ## Offline-Vorrat: was ohne vorheriges Öffnen offline verfügbar ist
 
@@ -119,7 +121,8 @@ einen Klick. Die Liste der Entwürfe zeigt, wie viele Seiten offline verfügbar 
 
 Damit eine Seite zum Vorrat gehört, muss sie also im Menü stehen oder von einer `offline-prefetch`-Region
 aus verlinkt sein. Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
-Links auf modale Dialoge und fremde Apps.
+Links auf modale Dialoge und fremde Apps sowie Download-Adressen wie `apex_util.get_blob`: **Bilder vom Server
+lädt der Vorrat nie.**
 
 Der Vorrat zählt nur Seiten, die wirklich frisch vom Server kamen. Reißt die Verbindung ab, kommt eine Seite
 nicht oder läuft die Sitzung ab, merkt er sich, wo er stand: Die Anzeige zeigt dann **„Vorrat unvollständig“**,
@@ -165,7 +168,10 @@ Offline-Vorrats. **„Anmeldung nötig“** heißt: die Sitzung ist abgelaufen, 
 Entwürfe hat dann den Knopf *Anmelden und übertragen*. In Listen sind Datensätze mit offenem Entwurf markiert
 (●). Ein Klick auf die Anzeige öffnet die Liste der Entwürfe mit *Öffnen*, *Verwerfen* und *Jetzt übertragen*;
 Foto-Entwürfe zeigen ein Vorschaubild. Jeder Entwurf heißt wie die Seite plus ihr erster ausgefüllter Wert,
-z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehört also nach oben.
+z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehört also nach oben. Neuanlagen erscheinen außerdem dort,
+wo sie hingehören (Regionen mit `offline-drafts`): ein noch nicht übertragenes Foto am Auftrag, ein offline
+angelegter Auftrag in der Liste. Bilder, die offline nicht verfügbar sind, zeigen „Bild nur online“ statt eines
+kaputten Bildes.
 
 Wartende Entwürfe gehen automatisch raus: beim Laden einer Seite, sobald die Verbindung zurück ist, wenn die
 App wieder in den Vordergrund kommt und sonst spätestens alle zwei Minuten.
@@ -205,10 +211,25 @@ Entwurf an und kehrt sofort zum Auftrag zurück, das Foto geht im Hintergrund ra
 der Techniker also nicht auf den Upload, und ein abgebrochenes Senden wird einfach wiederholt. Foto-Entwürfe
 mit dem Status *unklar* aus älteren Fassungen lassen sich ohne Prüfung öffnen und speichern.
 
-**Keine Bilddaten in gespeicherten Seiten.** Seite 2 zeigt die Fotos nur als Liste (Bemerkung, Zeitpunkt,
-Benutzer), die Bilder zeigt das Protokoll (Seite 3, nur online) mit einer nativen Spalte *Display Image* auf
-der BLOB-Spalte. So bleibt jede Seite im Offline-Vorrat klein. Offline aufgenommene Fotos sind bis zur
-Übertragung Entwürfe auf dem Gerät.
+**Ansehen: online vom Server, offline nur, was auf dem Gerät liegt.** Die Regel lautet: Bilder vom Server
+werden nie für offline geladen.
+
+| | Fotos vom Server | noch nicht übertragene Fotos |
+|---|---|---|
+| online | Vorschaubild in der Tabelle, Klick zeigt es groß | oben in der Region mit Vorschaubild und Status („noch nicht übertragen“, „wird übertragen“), Klick zeigt es groß |
+| offline | Eintrag mit Bemerkung, statt des Bildes „Bild nur online“ | wie online, aus dem Gerät |
+
+Seite 2 zeigt die Fotos mit einer nativen Spalte *Display Image* auf der BLOB-Spalte, per Seiten-CSS auf
+96 × 72 Pixel verkleinert; die Region hat die Klassen `offline-drafts` und `offline-lightbox`. Gespeicherte
+Offline-Seiten enthalten nur die Bildadressen, keine Bilddaten, und der Vorrat lädt keine Bilder. Ein
+übertragenes Foto liegt nur noch auf dem Server und ist offline deshalb nicht zu sehen.
+
+Datenmenge online: Das Vorschaubild ist das Foto selbst (etwa 150–400 KB), klein dargestellt. APEX lädt es erst,
+wenn es ins Bild kommt (`loading="lazy"`), einmal je Sitzung – die Adresse enthält die Sitzung –, danach prüft der
+Browser nur noch, ob es sich geändert hat (`must-revalidate`, ETag). Offline liefert der Browser es deshalb auch
+nicht aus seinem Cache. Werden die Datenmengen zu groß, sind zwei Ausbaustufen möglich: eine eigene Bildseite mit
+dauerhaftem Browser-Cache (jedes Foto nur einmal je Gerät) oder echte Vorschaubilder, die beim Aufnehmen im
+Browser entstehen (etwa 15 KB, braucht eine zweite Spalte und ein zweites Item).
 
 Für eine eigene Fotoseite gelten dieselben Regeln wie für jede Erfassungsseite (`offline-form`,
 Primärschlüssel und Auftragsbezug mit *User Level*, Link mit leerem Primärschlüssel), dazu:
@@ -242,7 +263,7 @@ darstellen kann.
   Online-Speichern einer Erfassungsseite auch deren neuer Stand). Was die Disposition danach an einem schon
   geladenen Datensatz ändert, kommt erst beim Öffnen oder mit „Vorrat neu laden“ aufs Gerät.
 * Offline funktionieren Textfelder, Auswahllisten, Optionsfelder, Schalter, Datum, Zahl, Unterschrift, Foto
-  und Scan. Vorhandene Fotos erscheinen offline nur als Liste, das Protokoll nur online. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
+  und Scan. Übertragene Fotos erscheinen offline ohne Bild („Bild nur online“), das Protokoll nur online. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
   serverseitige Dynamic Actions, Regionen mit Lazy Loading.
 * Uploads werden je nach Datenmenge bis zu einer Datenrate von etwa 32 kbit/s abgewartet; was langsamer ist,
   bricht ab und wird später erneut versucht. Wer während der Übertragung die Seite wechselt, startet sie neu
@@ -373,7 +394,7 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 | `apex.page.forEachPageItem` | genau die Items lesen, die APEX absendet | 0, 3–7 |
 | Markierungen `[data-for="ITEM"]` (geschütztes Item), `id="wwvFlowForm"`, `type="password"` | Prüfsummen-Items auslassen; echte Seite von Fehler- und Anmeldeseite unterscheiden | 0, 1, 3–8 |
 | Ziel eines Buttons als Inline-Skript `apex.jQuery("#B…")…navigation.redirect('…')` | Vorrat: Ziele von Buttons | 1 |
-| Universal Theme: `.t-NavigationBar`, `#t_TreeNav`, `.t-Header-nav`, `#main`, `.t-Form-itemWrapper`, Druck-Klassen | Statusanzeige, Menülinks, Hinweis „Nur online“, Scan-Taste, Druck | 0, 1, 9, 12 |
+| Universal Theme: `.t-NavigationBar`, `#t_TreeNav`, `.t-Header-nav`, `#main`, `.t-Form-itemWrapper`, `.t-Region-body`, Druck-Klassen | Statusanzeige, Menülinks, Hinweis „Nur online“, Scan-Taste, offene Neuanlagen in der Region, Druck | 0, 1, 4, 9, 11, 12 |
 | Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
 | generierte `sw.js`: lädt die Hook-Datei per `importScripts` vor dem eigenen `fetch`-Listener; Hook `FUNCTION_VARIABLE_DECLARATION` mit `apex.sw.cleanAppCaches/cleanAPEXCaches`; `/i/` und `<app>/files/static/v…` aus dem eigenen Cache, alle anderen GET-Anfragen offline mit leerer Antwort | Seitenspeicher vor dem von APEX; alte Dateien behalten | 0, 1, 2, 9 |
 | Anmeldeseite = Passwortfeld und Seitenvorlage `t-PageBody--login` oder Weiterleitung auf einen anderen Pfad | Anmeldeseite nie speichern; Vorrat hält bei abgelaufener Sitzung an | 1, 8 |

@@ -43,7 +43,10 @@ page 1 (
         appearance {
             template: @/standard
             templateOptions: #DEFAULT#
-            cssClasses: offline-prefetch
+            cssClasses: [
+                offline-prefetch
+                offline-drafts
+            ]
         }
         reportLayout {
             numberOfRows: 100
