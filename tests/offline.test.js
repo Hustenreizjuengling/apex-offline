@@ -16,11 +16,17 @@ if (!URL_ || !USER || !PASSWORD) { console.error("OE_URL, OE_USER und OE_PASSWOR
 const RUN = "T" + Date.now().toString(36);                 // Kennung dieses Laufs in den Testdaten
 const OFFICE = "Büro <b>" + RUN + "</b>";                     // Büro-Wert mit HTML: muss überall als Text erscheinen
 let failed = 0;
+let loginPill = 0;                                                // Anmeldeseiten mit Statusanzeige (soll 0 sein)
 function check(ok, text) { console.log((ok ? "  [OK]   " : "  [FEHLER] ") + text); if (!ok) { failed++; } }
 
 async function login(page) {
     await page.goto(URL_ + "/auftraege");
-    if (await page.locator("#P9999_USERNAME").count()) { await fillLogin(page); }
+    if (await page.locator("#P9999_USERNAME").count()) {
+        await page.waitForLoadState("load");
+        await page.waitForTimeout(500);                             // offline.js fügt die Anzeige nach dem Laden ein
+        if (await page.locator(".offline-status").count()) { loginPill++; }   // Anmeldeseite: keine Statusanzeige
+        await fillLogin(page);
+    }
     await page.waitForSelector(".offline-status");
 }
 async function fillLogin(page) {                    // APEX-Anmeldeseite; danach zurück zur aufgerufenen Seite
@@ -515,6 +521,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await gotoList(desk);
         check(await desk.locator("td", { hasText: RUN }).count() === 0, "Testaufträge gelöscht");
 
+        check(loginPill === 0, "Anmeldeseite ohne Statusanzeige");
         check(errors.length === 0, "keine JavaScript-Fehler" + (errors.length ? ": " + errors.join(" | ") : ""));
     } catch (e) {
         check(false, "Abbruch: " + e.message);

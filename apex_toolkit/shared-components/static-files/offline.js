@@ -916,7 +916,9 @@
             localStorage.setItem(userKey, env.APP_USER);
         }
         const navBar = document.querySelector(".t-NavigationBar");   // Kopfleiste neben dem Benutzer
-        if (navBar) {
+        if (env.APP_USER === "nobody") {
+            // nicht angemeldet (Anmeldeseite): keine Anzeige - nie offline gespeichert, keine eigenen Entwürfe
+        } else if (navBar) {
             const entry = document.createElement("li");
             entry.className = "t-NavigationBar-item offline-status-item";
             entry.append(pill);

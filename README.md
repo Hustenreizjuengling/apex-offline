@@ -162,7 +162,7 @@ Regionsquellen und PL/SQL-Anzeigen laufen wie bei einem Klick. Für Seiten im Vo
 ## Was der Anwender sieht
 
 In der Kopfleiste neben dem angemeldeten Benutzer steht der Zustand: **Online**, **Offline** oder
-**„2 offen"** (Seiten ohne Navigationsleiste zeigen ihn unten links), dazu **„sendet“** während der
+**„2 offen"** (Seiten ohne Navigationsleiste zeigen ihn unten links, die Anmeldeseite gar nicht), dazu **„sendet“** während der
 Übertragung – die Zahl offener Entwürfe sinkt dabei Entwurf für Entwurf – und **„lädt“** während des
 Offline-Vorrats. **„Anmeldung nötig“** heißt: die Sitzung ist abgelaufen, die Entwürfe warten; die Liste der
 Entwürfe hat dann den Knopf *Anmelden und übertragen*. In Listen sind Datensätze mit offenem Entwurf markiert
