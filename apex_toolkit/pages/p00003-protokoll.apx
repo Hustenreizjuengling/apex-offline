@@ -17,6 +17,8 @@ page 3 (
             @media print {
                 .oe-fotos img { max-width: 100%; max-height: 12cm; }
                 .oe-fotos tr { break-inside: avoid; }
+                /* Optik der App (Universal Theme), nicht Teil der Offline-Schicht: nur das Protokoll drucken */
+                .t-Header, .t-Body-nav, .t-Footer, .t-Breadcrumb-region, .t-ButtonRegion { display: none !important; }
             }
             ```
     }

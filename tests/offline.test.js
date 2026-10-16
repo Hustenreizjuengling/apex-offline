@@ -97,6 +97,30 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         };
     });
 }
+// Vertrag (README): die Offline-Schicht nutzt nur diese dokumentierte APEX-API und liest nie APEX- oder
+// Theme-Markup. Geprüft wird der Quelltext von offline.js, offline-sw.js und offline.css (ohne Kommentare).
+const CONTRACT = ["apex.env", "apex.items", "apex.item", "apex.jQuery", "apex.page.submit", "apex.page.validate",
+    "apex.page.isChanged", "apex.page.cancelWarnOnUnsavedChanges", "apex.message.showPageSuccess", "apex.message.hidePageSuccess",
+    "apex.message.showErrors", "apex.message.clearErrors", "apex.message.alert", "apex.message.confirm",
+    "apex.message.setThemeHooks", "apex.message.TYPE", "apex.util.escapeHTML", "apex.util.showSpinner"];
+function contractLint() {
+    const fs = require("fs"), path = require("path");
+    const dir = path.join(__dirname, "..", "apex_toolkit", "shared-components", "static-files");
+    const read = f => fs.readFileSync(path.join(dir, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const code = ["offline.js", "offline-sw.js"].map(f => read(f).replace(/(^|[^:"'\\])\/\/.*$/gm, "$1")).join("\n");
+    const problems = [];
+    for (const [full] of code.matchAll(/\bapex\.[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g)) {
+        if (!CONTRACT.some(c => full === c || full.startsWith(c + "."))) { problems.push(full); }
+    }
+    const markup = /(querySelector(?:All)?|closest|matches|getElementById)\(\s*["'`][^"'`]*(\.t-|#t_|\.ui-|#APEX_|#?main["'`]|wwv)/g;
+    for (const [bad] of code.matchAll(markup)) { problems.push(bad); }
+    for (const [bad] of code.matchAll(/wwv_flow|gCancelFlag|forEachPageItem|pReloadOnSubmit|apex\.sw\b|apex_dialog_|classList\.contains\(["']t-/g)) { problems.push(bad); }
+    for (const [, sel] of read("offline.css").matchAll(/([^{}]+)\{/g)) {
+        if (/(\.t-|#t_|\.ui-|#APEX_|#main\b)/.test(sel)) { problems.push("offline.css: " + sel.trim()); }
+    }
+    return [...new Set(problems)];
+}
+
 const bytesOf = (page, src) => page.evaluate(async url => (await (await fetch(url)).arrayBuffer()).byteLength, src);
 const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValue().split(",")[1]).length);
 
@@ -116,23 +140,24 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
     if (process.env.OE_DEBUG) { page.on("framenavigated", f => { if (f !== page.mainFrame()) { console.log("           iframe: " + f.url().replace(URL_, "")); } }); }
 
     try {
-        console.log("0. APEX-Interna, auf die offline.js sich verlässt (README: Woran die Schicht in APEX hängt)");
+        console.log("0. Vertrag: nur dokumentierte APEX-API, keine APEX- oder Theme-Interna (README: Vertrag)");
+        const lint = contractLint();
+        check(lint.length === 0, "Quelltext hält den Vertrag" + (lint.length ? " – verletzt: " + lint.join(" | ") : ""));
         await login(page);                                          // erster Aufruf überhaupt, nichts weiter öffnen
-        const internals = await page.evaluate(async () => {
+        const live = await page.evaluate(async () => {
             const missing = [];
             const need = (ok, what) => { if (!ok) { missing.push(what); } };
-            need(typeof apex.items === "object", "apex.items");
-            need(typeof apex.message.setThemeHooks === "function" && !!apex.message.TYPE, "apex.message.setThemeHooks / TYPE");
-            need(typeof apex.util.showSpinner === "function", "apex.util.showSpinner");
-            need(!!window.offlineCapture, "offline.js: offlineCapture für die Dynamic Action auf Seite 0");
-            need(!!document.querySelector(".t-NavigationBar"), "Universal Theme .t-NavigationBar");
             need(!!document.getElementById("offline-page"), "Seitenkennung #offline-page (Region auf Seite 0)");
+            need(!!window.offlineCapture, "offlineCapture für die Dynamic Action auf Seite 0");
+            need(!document.querySelector('a[href$="#offline-status"]') && !!document.querySelector(".offline-status-item .offline-status"),
+                "Statusanzeige am Platz des Eintrags #offline-status der Navigationsleiste");
+            need(!/gestört/.test(document.querySelector(".offline-status").textContent), "Selbstprüfung von offline.js bestanden");
             await navigator.serviceWorker.ready;
             const probe = await fetch(location.pathname.replace(/[^/]*$/, "") + "offline-probe").catch(() => null);
             need(!!probe && probe.headers.get("x-offline-sw") === "1", "Service-Worker-Hook EVENT_FETCH beantwortet die Probe");
             return missing;
         });
-        check(internals.length === 0, "APEX-Interna vorhanden" + (internals.length ? " – geändert: " + internals.join(", ") : ""));
+        check(live.length === 0, "Bausteine im Builder und Selbstprüfung" + (live.length ? " – fehlt: " + live.join(", ") : ""));
 
         console.log("1. Online nur anmelden: der Offline-Vorrat lädt alle Seiten im Hintergrund");
         const orders = await page.locator(".offline-prefetch td a", { hasText: /^A-\d+|^T/ }).count();
@@ -485,10 +510,11 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await waitFor(() => notice().isVisible(), 10000, "Hinweis bei Verbindungsverlust");
         check(await report().isHidden(), "Verbindung weg: Hinweis „" + (await notice().locator("h2").innerText()) + "“ statt Inhalt");
         await page.reload();
-        await page.waitForSelector(".offline-status");
-        check(await notice().isVisible() && await report().isHidden(), "offline aufgerufen: Hinweis statt gespeicherter Zahlen");
-        await field.setOffline(false);
-        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        await page.waitForSelector(".online-only-notice");             // Hinweis des Service Workers, keine gespeicherte Fassung
+        check(await notice().isVisible() && await report().count() === 0 && !IS_COPY_PAGE(await page.content()),
+            "offline aufgerufen: Hinweis statt gespeicherter Zahlen");
+        await field.setOffline(false);                              // der Hinweis lädt bei Verbindung von selbst neu
+        await page.evaluate(() => window.dispatchEvent(new Event("online"))).catch(() => {});
         await waitFor(async () => await report().isVisible().catch(() => false) && !IS_COPY_PAGE(await page.content()), 20000, "Seite neu geladen");
         check(await notice().isHidden(), "wieder online: aktuelle Auswertung ohne Hinweis");
 
@@ -573,6 +599,33 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 60000, "nachgesendet");
         const a5 = await serverValues(desk, "A-1005");
         check(a5.befund === "Abbruch " + RUN, "nach dem Abbruch nachgesendet: Befund auf dem Server");
+
+        console.log("13c. Selbstprüfung: fehlt eine API oder die Dynamic Action, schaltet sich die Erfassung ab");
+        const brokenCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE", serviceWorkers: "block" });
+        const damaged = await brokenCtx.newPage();
+        damaged.on("dialog", d => d.accept());
+        await damaged.route(/\/offline\.js(\?|$)/, async route => {      // so, als gäbe es apex.message.confirm nicht mehr
+            const res = await route.fetch();
+            await route.fulfill({ response: res, body: "delete window.apex.message.confirm;\n" + await res.text() });
+        });
+        await login(damaged);
+        await openOrder(damaged, "A-1004");
+        const off = await damaged.evaluate(() => ({ pill: document.querySelector(".offline-status").textContent, takes: window.offlineCapture.takes("SAVE") }));
+        check(/gestört/.test(off.pill) && off.takes === false, "fehlende API: Anzeige „" + off.pill + "“, Erfassung abgeschaltet");
+        await damaged.locator(".offline-status").click();
+        check(/apex\.message\.confirm/.test(await damaged.locator(".offline-panel").innerText()), "Liste der Entwürfe nennt den Grund");
+        await damaged.keyboard.press("Escape");
+        await damaged.fill("#P2_BEFUND", "Ohne Schicht " + RUN);
+        await Promise.all([damaged.waitForURL(/auftraege/), damaged.getByRole("button", { name: "Speichern" }).click()]);
+        check((await serverValues(desk, "A-1004")).befund === "Ohne Schicht " + RUN && await drafts(damaged) === "", "abgeschaltet speichert APEX selbst, ohne Entwurf");
+        await brokenCtx.close();
+        await gotoList(page);
+        await openOrder(page, "A-1001");
+        await page.evaluate(() => apex.jQuery(apex.gPageContext$).trigger("apexpagesubmit", ["SAVE"]));   // APEX sendet, ohne dass die Dynamic Action lief
+        check(/gestört/.test(await pill(page)) && await page.evaluate(() => window.offlineCapture.takes("SAVE")) === false,
+            "Dynamic Action fehlt: Anzeige „" + await pill(page) + "“, Erfassung abgeschaltet");
+        await page.reload();
+        await page.waitForSelector(".offline-status");
 
         console.log("14. Aufräumen: Testaufträge samt Fotos im Büro löschen");
         for (const nr of [RUN + "C", RUN + "B", RUN]) {

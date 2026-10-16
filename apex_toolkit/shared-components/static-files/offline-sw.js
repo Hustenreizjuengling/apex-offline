@@ -30,6 +30,17 @@ const OFFLINE_PAGE = '<!doctype html><html lang="de"><meta charset="utf-8">'
     + '<h1>Keine Verbindung</h1><p>Diese Seite wurde noch nicht online aufgerufen und ist deshalb offline nicht verfügbar.</p>'
     + '<p><button onclick="history.back()">Zurück</button> <button onclick="location.reload()">Erneut versuchen</button></p>';
 
+// Seiten mit der Page-CSS-Klasse online-only: offline nie die gespeicherte Fassung (veraltete Zahlen), sondern
+// dieser Hinweis. Kommt die Verbindung zurück, lädt er die Seite neu.
+const ONLINE_ONLY_PAGE = '<!doctype html><html lang="de"><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Nur online verfügbar</title>'
+    + '<body style="font:16px system-ui,sans-serif;margin:3rem auto;max-width:32rem;padding:0 1rem">'
+    + '<div class="online-only-notice"><h2>Nur online verfügbar</h2><p>Diese Seite braucht eine Verbindung zum Server. '
+    + 'Die offline verfügbaren Seiten erreichen Sie mit „Zurück“.</p>'
+    + '<p><button onclick="history.back()">Zurück</button> <button onclick="location.reload()">Erneut versuchen</button></p></div>'
+    + '<script>addEventListener("online", () => location.reload());</script>';
+const ONLINE_ONLY = /<body\b[^>]*\bclass="[^"]*\bonline-only\b/i;           // eigene Klasse am body (Page CSS Classes)
+
 const HTML = { "Content-Type": "text/html; charset=utf-8" };
 
 function pageKey(href) {                          // eine Seite = Pfad + fachliche Parameter
@@ -71,7 +82,9 @@ async function fromCache(key) {
     if (!hit) { return null; }
     // Markierung für offline.js: Sitzung und Prüfsummen dieser Fassung sind veraltet; content = gespeichert um
     const stored = hit.headers.get("x-offline-stored") || "";
-    const html = (await hit.text()).replace(/<head[^>]*>/i, head => head + '<meta name="offline-copy" content="' + stored + '">');
+    const text = await hit.text();
+    if (ONLINE_ONLY.test(text)) { return new Response(ONLINE_ONLY_PAGE, { headers: HTML }); }
+    const html = text.replace(/<head[^>]*>/i, head => head + '<meta name="offline-copy" content="' + stored + '">');
     return new Response(html, { headers: HTML });
 }
 

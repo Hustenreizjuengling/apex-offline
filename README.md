@@ -37,9 +37,9 @@ der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst
 | Datei (`apex_toolkit/shared-components/static-files/`) | Zweck |
 |---|---|
 | `offline.js` | Entwürfe, Übertragung, Statusanzeige, Unterschrift, Scan, Vorab-Laden |
-| `offline-sw.js` | Service-Worker-Hook: Seiten speichern und offline ausliefern |
-| `offline.css` | Statusanzeige, Unterschriftenfeld, Scanner, Druck |
-| `messages.css` | optional: Seitenmeldungen oben mittig und kompakt (unabhängig von der Offline-Schicht) |
+| `offline-sw.js` | Service-Worker-Hooks: Seiten und Dateien speichern und offline ausliefern |
+| `offline.css` | Statusanzeige, Unterschriftenfeld, Scanner, Hinweis „Nur online“ – nur eigene Klassen, kein Theme-Markup |
+| `messages.css` | optional, **Optik der App**, nicht Teil der Schicht: Seitenmeldungen oben mittig und kompakt. Sie gestaltet Markup des Universal Theme; nach einem Update kann die Optik der Meldungen abweichen, nie eine Funktion |
 | `vendor/barcode-detector/` | optional: Barcode-/QR-Decoder für iPhone, Windows, Firefox ([Fremdcode](THIRD-PARTY-NOTICES.md)) |
 
 Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur die Objekte der Beispiel-App an.
@@ -57,7 +57,10 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
    `#APP_FILES#offline-sw.js`. Voraussetzung: HTTPS und Friendly URLs (Standard).
 4. **Security → Browser Security → Embed in Frames:** *Allow from same origin* (die Übertragung lädt
    die Seite unsichtbar in einem Rahmen der eigenen App).
-5. **Globale Seite (Seite 0):** drei Komponenten, Vorlage `apex_toolkit/pages/p00000-global-page.apx`:
+5. **Navigationsleiste** (Shared Components → Lists → *Navigation Bar*): Eintrag „Offline-Status“, Ziel *URL*
+   `#offline-status`, Server-side Condition *User is Authenticated (not public)*. An seiner Stelle zeigt `offline.js`
+   die Statusanzeige; ohne Eintrag steht sie unten links. Vorlage: `apex_toolkit/shared-components/lists.apx`.
+6. **Globale Seite (Seite 0):** drei Komponenten, Vorlage `apex_toolkit/pages/p00000-global-page.apx`:
    * Region „Offline-Kennung“, Typ *Static Content*, Template *Blank with Attributes*, HTML
      `<span id="offline-page" hidden></span>`, Server-side Condition *User is Authenticated (not public)*. Nur
      Seiten mit dieser Kennung speichert der Service Worker; Anmelde- und Fehlerseiten tragen sie nicht.
@@ -66,7 +69,7 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
    * Dynamic Action „Offline-Erfassung“: Ereignis *Before Page Submit*, Client-side Condition *JavaScript
      Expression* `!!window.offlineCapture && window.offlineCapture.takes(this.data)`, Aktionen 1. *Execute
      JavaScript Code* `window.offlineCapture.save(this.data);` 2. *Cancel Event*.
-6. Empfohlen: **Session Management** – längere *Maximum Session Length / Idle Time* für Arbeitstage im
+7. Empfohlen: **Session Management** – längere *Maximum Session Length / Idle Time* für Arbeitstage im
    Außendienst (Beispiel-App: 24 h / 8 h). Solange die Sitzung gilt, wird ohne neue Anmeldung übertragen.
 
 ## Eine Seite offlinefähig machen (je Formularseite)
@@ -104,10 +107,10 @@ auf der Instanz fehlt.
 
 Seiten, die ohne Verbindung keinen Sinn ergeben (Auswertungen, Verwaltung), bekommen die Page-CSS-Klasse
 **`online-only`** (Page → Appearance → CSS Classes). Ohne Verbindung zeigen sie statt des Inhalts den
-Hinweis „Nur online verfügbar"; Kopfleiste und Menü bleiben, sodass man zu den offline verfügbaren Seiten
-wechseln kann. Reißt die Verbindung ab, während die Seite offen ist, erscheint der Hinweis sofort; kommt
-sie zurück, lädt die Seite ihren aktuellen Inhalt. Eine gespeicherte Fassung zeigt nie veraltete Zahlen –
-`offline.css` blendet ihren Inhalt aus, bevor das JavaScript läuft. Beispiel: Seite 5 „Auswertung".
+Hinweis „Nur online verfügbar" mit *Zurück* (zu den offline verfügbaren Seiten) und *Erneut versuchen*. Reißt die
+Verbindung ab, während die Seite offen ist, ersetzt der Hinweis sofort die ganze Seite; kommt sie zurück, ist der
+Inhalt wieder da. Eine gespeicherte Fassung liefert der Service Worker nie aus, sondern seinen eigenen Hinweis, der
+bei zurückkehrender Verbindung neu lädt – so zeigt die Seite nie veraltete Zahlen. Beispiel: Seite 5 „Auswertung".
 
 ## Bedienelemente per CSS-Klasse
 
@@ -179,8 +182,8 @@ Regionsquellen und PL/SQL-Anzeigen laufen wie bei einem Klick. Für Seiten im Vo
 
 ## Was der Anwender sieht
 
-In der Kopfleiste neben dem angemeldeten Benutzer steht der Zustand: **Online**, **Offline** oder
-**„2 offen"** (Seiten ohne Navigationsleiste zeigen ihn unten links, die Anmeldeseite gar nicht), dazu **„sendet“** während der
+Am Platz des Eintrags „Offline-Status“ der Navigationsleiste steht der Zustand: **Online**, **Offline** oder
+**„2 offen"** (ohne den Eintrag unten links, auf der Anmeldeseite gar nicht), dazu **„sendet“** während der
 Übertragung – die Zahl offener Entwürfe sinkt dabei Entwurf für Entwurf – und **„lädt“** während des
 Offline-Vorrats. **„Anmeldung nötig“** heißt: die Sitzung ist abgelaufen, die Entwürfe warten; die Liste der
 Entwürfe hat dann den Knopf *Anmelden und übertragen*. In Listen sind Datensätze mit offenem Entwurf markiert
@@ -269,7 +272,8 @@ ein Prozess nach dem Formular speichert sie mit `pck_oe_auftrag_foto_dml.bild_au
 ## Protokoll
 
 Seite 3 zeigt einen Auftrag mit Unterschrift und Fotos druckfertig an; *Drucken / PDF* nutzt den
-Druckdialog des Browsers. Die Seite ist `online-only`: Offline erfasste Daten erscheinen im Protokoll erst nach
+Druckdialog des Browsers. Kopfleiste, Menü und Knöpfe blendet das Seiten-CSS von Seite 3 beim Drucken aus
+(Optik der App, Klassen des Universal Theme); `offline.css` blendet nur die eigenen Bedienelemente aus. Die Seite ist `online-only`: Offline erfasste Daten erscheinen im Protokoll erst nach
 der Übertragung, eine gespeicherte Fassung zeigte den alten Stand. Die Fotos zeigt eine native Spalte *Display
 Image*, die Unterschrift gibt `pck_oe_html` aus, weil das Item *Display Image* keine Data-URLs über 4000 Zeichen
 darstellen kann.
@@ -401,35 +405,44 @@ Was danach auf den Geräten passiert:
   selbst in einem eigenen Cache je APEX-Version. Aufräumen lässt sich das über „Websitedaten löschen" im
   Browser – vorher alles übertragen.
 
-## Woran die Schicht in APEX hängt
+## Vertrag: woran die Schicht in APEX hängt
 
-Neben dokumentierten APIs (`apex.env`, `apex.item`, `apex.page.submit/validate/isChanged`, `apex.message`,
-`apex.util`, `apex.navigation.dialog.close`) nutzt die Schicht Verhalten von APEX 26.1, das nicht als API
-zugesagt ist. Alles davon steht hier, damit ein APEX-Upgrade gezielt geprüft werden kann. Die Spalte „Test“ nennt
-den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
+Die Schicht stützt sich nur auf drei Dinge: **dokumentierte APEX-API**, **deklarative Builder-Funktionen mit
+beschriebenem Verhalten** und **Webstandards** (DOM, Fetch, Service Worker, Cache API, IndexedDB, Web Locks).
+Interne APEX-Funktionen, von APEX erzeugtes Markup oder Skript, Klassen und IDs des Universal Theme und
+APEX-interne Adressen oder Antwortformate nutzt sie nicht. Testschritt 0 prüft das am Quelltext; neue Stellen
+gehören in diese Liste oder werden nicht gebaut.
 
-| Was | wofür | Test |
+| Baustein | Grundlage | wofür |
 |---|---|---|
-| Dynamic Action *Before Page Submit* mit Aktion *Cancel Event* (dokumentiert für `apexbeforepagesubmit`), `this.data` = Request | Speichern übernehmen | 3, 4, 13b |
-| `apex.page.submit({ request, reloadOnSubmit: "S" })` (dokumentiert): APEX lädt nur nach erfolgreicher Verarbeitung neu | Erfolg der Übertragung = neue Seite im Rahmen | 6, 13b |
-| `apex.message.setThemeHooks` / `apex.message.TYPE` (dokumentiert), im unsichtbaren Rahmen | Ablehnung der Übertragung und ihre Meldungen | 7, 11, 13b |
-| `apex.items`, `apex.item().getValue/setValue` (dokumentiert) | Items lesen und setzen | 3–7 |
-| Ereignis `apexpagesubmit` (dokumentiert) | Selbstprüfung: APEX sendet trotz *Cancel Event* selbst, Dynamic Action fehlt | – |
-| Region *List* und *Dynamic Content* (`apex_page.get_url`, dokumentiert): APEX erzeugt `<a href>` mit Prüfsumme | Vorrat: Menüseiten, „Neuer Auftrag“, „Foto hinzufügen“ | 1 |
-| Universal Theme: `.t-NavigationBar`, `#main`, `.t-Form-itemWrapper`, Druck-Klassen | Statusanzeige, Hinweis „Nur online“, Scan-Taste, Druck | 0, 4, 9, 11, 12 |
-| Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
-| Service-Worker-Hooks `EVENT_INSTALL`, `EVENT_ACTIVATE`, `EVENT_FETCH` (dokumentiert: ersetzen das Ereignis ganz) | Seitenspeicher, statische Dateien, keine Aufräumlogik von APEX | 0, 1, 2, 9 |
-| `apex.env.APEX_FILES`, `APP_FILES`, `WORKSPACE_FILES`, `APEX_VERSION` (dokumentiert) | statische Dateien: Speicher zuerst, ein Cache je APEX-Version; Erreichbarkeit (HEAD auf `offline.js`) | 2, 6 |
-| eigene Seitenkennung `#offline-page` (Region auf Seite 0, nur für angemeldete Benutzer) | nur echte Seiten speichern; Anmelde- und Fehlerseite erkennen | 0, 1, 8 |
-| Parameter der Friendly URLs, nur die dokumentierten (`session cs dialogCs clear debug trace timezone`); auf der eigenen Seite zählen sonst nur Parameter, die Items sind | Schlüssel gespeicherter Seiten und Entwürfe, Aufruf mit der aktuellen Sitzung | 1–8 |
-| Prüfsummen auf Benutzerebene sind über Sitzungen gleich; Deep Linking; *Rejoin Sessions* wirkt nicht | Entwürfe überstehen eine neue Anmeldung | 8 |
-| große CLOB-Item-Werte werden beim Absenden in Stücken übertragen | Unterschrift und Foto als Data-URL | 11 |
+| `apex.env` (`APP_ID`, `APP_PAGE_ID`, `APP_SESSION`, `APP_USER`, `APP_FILES`, `APEX_FILES`, `WORKSPACE_FILES`, `APEX_VERSION`, `APEX_BASE_VERSION`) | JavaScript-API | Sitzung, Benutzer, Pfade der statischen Dateien, Hinweis auf neue APEX-Version |
+| `apex.items`, `apex.item().getValue/setValue/node` | JavaScript-API | Items lesen und setzen |
+| `apex.page.submit({ request, reloadOnSubmit: "S" })`, `validate`, `isChanged`, `cancelWarnOnUnsavedChanges` | JavaScript-API | Absenden im Rahmen (bei „S“ lädt APEX nur nach Erfolg neu), Prüfung am Item |
+| `apex.message.showPageSuccess/hidePageSuccess/showErrors/clearErrors/alert/confirm/setThemeHooks/TYPE` | JavaScript-API | Meldungen; im unsichtbaren Rahmen erkennt `setThemeHooks` eine Ablehnung |
+| `apex.util.escapeHTML/showSpinner`, `apex.jQuery`, Ereignisse `apexreadyend`, `apexpagesubmit` | JavaScript-API | Ausgabe, Warteanzeige, Start, Selbstprüfung |
+| Dynamic Action *Before Page Submit* mit *Cancel Event*, `this.data` = Request | Builder; Doku von `apexbeforepagesubmit` | Speichern übernehmen |
+| Service-Worker-Hooks `EVENT_INSTALL`, `EVENT_ACTIVATE`, `EVENT_FETCH` | Builder (PWA); APEX PWA Reference | Seiten und Dateien speichern |
+| Regionen *Static Content*, *List*, *Dynamic Content*, `apex_page.get_url`, Globale Seite, Listeneintrag der Navigationsleiste, Page-CSS-Klassen am `body` | Builder, PL/SQL-API | Seitenkennung, Vorrat, Links mit Prüfsumme, Platz der Anzeige, Seitenkennzeichen |
+| Friendly URLs, nur dokumentierte Parameter (`session cs dialogCs clear debug trace timezone request lang territory printerFriendly x01`) | Doku | Schlüssel gespeicherter Seiten und Entwürfe |
+| Prüfsumme *Checksum Required – User Level*, Deep Linking | Builder (Session State Protection) | Entwürfe überstehen eine neue Anmeldung |
+| Session State Data Type *CLOB* | Builder | Unterschrift und Foto als Data-URL |
 
-**APEX-Upgrade prüfen:**
+**Selbstprüfung:** Beim Start prüft `offline.js` jede API dieser Liste und die Seitenkennung; beim Absenden prüft
+es über `apexpagesubmit`, dass *Cancel Event* gewirkt hat und der Request ankommt; der Service Worker beantwortet
+eine Probe. Fehlt etwas, schaltet sich die Offline-Erfassung ab: APEX speichert normal, offene Entwürfe bleiben auf
+dem Gerät und werden nicht gesendet, die Anzeige meldet **„Offline gestört“** mit dem Grund in der Liste der
+Entwürfe. Nichts geht verloren, nichts wird doppelt gesendet.
 
-1. Die neue APEX-Version auf einer Testinstanz installieren und die App importieren.
-2. `npm test` ausführen. Schritt 0 prüft die Interna zuerst und nennt, was sich geändert hat.
-3. Die Tabelle durchgehen.
+**Bewusste Grenzen** statt Interna: Erfassungsseiten sind keine modalen Dialoge; Buttons tragen nichts zum Vorrat
+bei (nur Links); Fehler aus PL/SQL-Validierungen erscheinen oben auf der Seite statt am Feld.
+
+**Routine je APEX-Update** (wenige Minuten, kein Testlauf nötig):
+
+1. In den Release Notes „Deprecated Features“ und „Changed Behavior“ gegen diese Tabelle lesen.
+2. Die App einmal öffnen: Die Anzeige zeigt kein „Offline gestört“; die Liste der Entwürfe nennt die neue
+   APEX-Version, bis `TESTED_APEX` in `offline.js` nachgezogen ist.
+3. `npm test` bleibt das Werkzeug für eigene Änderungen und für eine Testinstanz – Voraussetzung für den
+   Betrieb ist er nicht.
 
 ## Beispiel-App installieren
 
@@ -460,11 +473,13 @@ für die Links in offline gespeicherten Seiten und Entwürfen.
 ## Test
 
 `tests/offline.test.js` spielt den Außendienst im echten Browser (Playwright, Chromium) gegen eine
-laufende Instanz durch. Zuerst prüft Schritt 0 die [APEX-Interna](#woran-die-schicht-in-apex-hängt), dann folgen
+laufende Instanz durch. Zuerst prüft Schritt 0 den [Vertrag](#vertrag-woran-die-schicht-in-apex-hängt): Der
+Quelltext von `offline.js`, `offline-sw.js` und `offline.css` darf nur die dort gelisteten APIs nutzen und kein APEX-
+oder Theme-Markup lesen; dazu die Bausteine im Builder und die Selbstprüfung. Dann folgen
 Offline-Vorrat, Liste und nie geöffneter Auftrag offline, Erfassen mit
 Unterschrift, Prüfung am Item, Neuanlage, automatische Übertragung, Konflikt, abgelaufene Sitzung mit
 neuer Anmeldung, Scannen mit simulierter Kamera ohne Zugriff auf fremde Server, Verwerfen, Foto, Seite
-nur für online.
+nur für online, Online-Speichern über den Rahmen (Ablehnung, wieder geöffnete Neuanlage, Verbindungsabbruch).
 
 ```text
 npm install                                  # einmalig: Playwright

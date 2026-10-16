@@ -1,6 +1,7 @@
 /* offline.css - Darstellung der Offline-Erfassung (gehört zu offline.js) */
 
-/* Verbindungsstatus in der Kopfleiste neben dem Benutzer: grün = online, orange = Entwürfe offen, rot = offline */
+/* Verbindungsstatus am Platz des Eintrags "Offline-Status" der Navigationsleiste: grün = online,
+   orange = Entwürfe offen, rot = offline. Gestaltet wird nur über eigene Klassen, nie über Theme-Markup. */
 .offline-status {
     border: 0; border-radius: 999px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
     font: 600 12px/1.2 system-ui, sans-serif; color: #fff; background: #1e7d3c;
@@ -10,8 +11,8 @@
 .offline-status.has-warning::before { content: "\26A0\FE0E\00A0"; }
 .offline-status.is-offline { background: #b3261e; }
 .offline-status { max-width: 70vw; overflow: hidden; text-overflow: ellipsis; }
-.offline-status-item { display: flex; align-items: center; margin-inline-end: 8px; }
-/* Seiten ohne Navigationsleiste: unten links */
+.offline-status-item { display: inline-flex; align-items: center; height: 100%; margin-inline-end: 8px; }
+/* ohne Eintrag in der Navigationsleiste: unten links */
 body > .offline-status { position: fixed; left: 12px; bottom: 12px; z-index: 900; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
 
 /* Region, die nur für die Offline-Schicht da ist (z. B. der Offline-Vorrat auf Seite 0) */
@@ -65,28 +66,26 @@ img[data-offline-missing] { display: none !important; }
     padding: 4px 8px; border: 1px dashed #888; border-radius: 4px; color: #666; font-size: .8rem; text-align: center;
 }
 
-/* Barcode/QR-Scanner: Taste rechts im Feld wie beim Datumsfeld (UT sortiert das Eingabefeld mit order: 3) */
-.t-Form-itemWrapper > .offline-scan-button { order: 4; margin: 0; min-width: 44px; border-radius: 0 4px 4px 0; box-shadow: none; }
+/* Barcode/QR-Scanner: Taste direkt hinter dem Eingabefeld */
+.offline-scan-button { min-width: 44px; margin-inline-start: 4px; }
 .offline-scan-overlay {
     position: fixed; inset: 0; z-index: 1000; background: #000;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
 }
 .offline-scan-overlay video { width: 100%; max-height: 80vh; object-fit: contain; }
 
-/* Seiten nur für online (Page > Appearance > CSS Classes: online-only): ohne Verbindung Hinweis statt Inhalt.
-   Die gespeicherte Fassung (meta offline-copy) blendet den Inhalt schon vor dem JavaScript aus. */
+/* Seiten nur für online (Page > Appearance > CSS Classes: online-only): bricht die Verbindung ab, ersetzt der
+   Hinweis die ganze Seite. Eine gespeicherte Fassung liefert offline-sw.js nie aus, sondern seinen Hinweis. */
 .online-only-notice {
     display: none; max-width: 36rem; margin: 2rem auto; padding: 1.5rem; text-align: center;
     border-radius: 8px; background: var(--ut-component-background-color, #fff); box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
 }
 .online-only-notice h2 { margin: 0 0 .5rem; font-size: 1.25rem; }
-html.offline-mode body.online-only #main > :not(.online-only-notice),
-html:has(meta[name="offline-copy"]) body.online-only #main > :not(.online-only-notice) { display: none; }
-html.offline-mode body.online-only .online-only-notice,
-html:has(meta[name="offline-copy"]) body.online-only .online-only-notice { display: block; }
+html.offline-mode body.online-only > :not(.online-only-notice) { display: none !important; }
+html.offline-mode body.online-only > .online-only-notice { display: block; }
 
-/* Drucken (Protokoll): nur der Inhalt */
+/* Drucken: eigene Bedienelemente ausblenden (Kopfleiste und Menü blendet die Seite selbst aus, siehe Seite 3) */
 @media print {
-    .offline-status, .offline-signature-pad button, .t-Header, .t-Body-nav, .t-Footer,
-    .t-Breadcrumb-region, .t-ButtonRegion, .offline-scan-button { display: none !important; }
+    .offline-status, .offline-signature-pad button, .offline-scan-button, .offline-photo-box label,
+    .online-only-notice { display: none !important; }
 }

@@ -1,6 +1,23 @@
 list navigation-bar (
     name: Navigation Bar
 
+    // Platz der Offline-Statusanzeige: offline.js macht diesen Link zur Anzeige
+    entry offline-status (
+        label: Offline
+        layout {
+            sequence: 5
+        }
+        link {
+            target: {
+                type: url
+                url: #offline-status
+            }
+        }
+        serverSideCondition {
+            type: userIsAuthenticated
+        }
+    )
+
     entry app-user (
         label: &APP_USER.
         icon {

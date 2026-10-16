@@ -42,7 +42,7 @@
     const COPY = document.querySelector('meta[name="offline-copy"]');    // Seite kam offline aus dem Cache
     const IS_COPY = !!COPY;
     const COPY_AT = COPY && Number(COPY.content) > 1e12 ? Number(COPY.content) : 0;   // gespeichert um (ab 1.9.0)
-    const IN_FRAME = window !== window.top;                              // Dialogseite oder Übertragungsseite
+    const IN_FRAME = window !== window.top;                              // Dialogseite oder Übertragungsseite (keine Erfassung)
     const CONTROLLED = !!(navigator.serviceWorker && navigator.serviceWorker.controller); // Seite lief schon über den Service Worker
     const VENDOR = (document.currentScript ? document.currentScript.src : "").replace(/[^/]*$/, "vendor/barcode-detector/");
 
@@ -80,6 +80,18 @@
     let takesArg;            // Request, den die Bedingung bekam (this.data)
     let abortCapture = false; // APEX sendet trotz Cancel Event selbst: eigenen Entwurf verwerfen
     let disabled = "";       // Selbstprüfung fehlgeschlagen (Grund): APEX speichert normal, nichts wird gesendet
+    let swBroken = "";       // Selbstprüfung: Seitenspeicher (Service Worker) arbeitet nicht
+
+    // Vertrag: die APEX-API, auf die sich diese Datei stützt - nur dokumentierte API (README "Vertrag").
+    // Fehlt etwas davon, schaltet sich die Offline-Erfassung ab, statt still falsch zu arbeiten.
+    const TESTED_APEX = "26.1";                   // zuletzt geprüfte APEX-Version (README "Vertrag", Routine je Update)
+    const CONTRACT = ["apex.env.APP_ID", "apex.env.APP_PAGE_ID", "apex.env.APP_SESSION", "apex.env.APP_USER",
+        "apex.env.APP_FILES", "apex.env.APEX_FILES", "apex.items", "apex.item", "apex.page.submit", "apex.page.validate",
+        "apex.page.isChanged", "apex.page.cancelWarnOnUnsavedChanges", "apex.message.showPageSuccess",
+        "apex.message.hidePageSuccess", "apex.message.showErrors", "apex.message.clearErrors", "apex.message.alert",
+        "apex.message.confirm", "apex.message.setThemeHooks", "apex.message.TYPE.ERROR", "apex.util.escapeHTML",
+        "apex.util.showSpinner", "apex.jQuery"];
+    const missing = CONTRACT.filter(p => !p.split(".").slice(1).reduce((o, k) => (o ? o[k] : undefined), apex));
     let pickedAt = 0;        // zuletzt Kamera, Galerie oder Scanner geöffnet
     let reloading = false;   // Seite lädt gleich neu: nichts mehr anstoßen
     let leaving = false;     // Seite wird verlassen: abgebrochene Anfragen sind dann kein Fehler
@@ -107,7 +119,7 @@
     const unsure = d => d.create && !d.resend ? "unklar" : "wartet";        // resend: die Seite erkennt doppelt Gesendetes
     const allowance = chars => 30000 + chars / 4;                           // Zeitlimit wächst mit der Datenmenge (ab ca. 32 kbit/s)
     // Neu laden nur, wenn dabei nichts verloren geht: nichts geändert, kein Dialog, Kamera oder Scanner, sichtbar
-    const canReload = () => !apex.page.isChanged() && !document.querySelector(".ui-dialog--apex, .offline-scan-overlay")
+    const canReload = () => !apex.page.isChanged() && !document.querySelector("iframe:not([name=offline-sync]), dialog[open], .offline-scan-overlay")
         && document.visibilityState === "visible" && Date.now() - pickedAt > 120000;
 
     function pageKey(href) {                      // eine Seite = Pfad + fachliche Parameter
@@ -202,6 +214,7 @@
         console.warn("offline.js abgeschaltet: " + why);
         refresh();
     }
+    if (missing.length) { disabled = "APEX-API fehlt: " + missing.join(", "); }
 
     function makeDraft(request) {                 // geänderte Felder (alter und neuer Wert); null = nichts geändert
         const items = draft ? { ...draft.items } : {};
@@ -332,13 +345,6 @@
     }
 
     function leave(text) {                        // wie der übliche Verzweig nach dem Speichern
-        const dialog = window.frameElement && /^apex_dialog_/.test((window.frameElement.parentElement || {}).id || "");
-        if (dialog) {
-            window.parent.apex.message.showPageSuccess(text);
-            window.parent.dispatchEvent(new Event("offline-drafts"));   // Hauptseite überträgt
-            apex.navigation.dialog.close(true);
-            return;
-        }
         sessionStorage.setItem("offline-flash", text);
         if (history.length > 1) { history.back(); } else { location.reload(); }
     }
@@ -603,7 +609,7 @@
         if (IS_COPY) { parts.push(COPY_AT ? "Stand " + when(COPY_AT) : "gespeicherte Seite"); }
         if (list.length) { parts.push(list.length + " offen"); }
         if (online && transmitting) { parts.push("sendet"); } else if (online && stocking) { parts.push("lädt"); }
-        const warn = (stockIncomplete() && !stocking) || (online && needLogin) || !!disabled;
+        const warn = (stockIncomplete() && !stocking) || (online && needLogin) || !!disabled || !!swBroken;
         if (stockIncomplete() && !stocking) { parts.push(stockState.limit ? "Vorrat begrenzt" : "Vorrat unvollständig"); }
         if (online && needLogin) { parts.push("Anmeldung nötig"); }
         if (disabled) { parts.push("Offline gestört"); }
@@ -627,6 +633,9 @@
         const dialog = document.createElement("dialog");
         dialog.className = "offline-panel";
         dialog.innerHTML = "<h2>Offline erfasst</h2>"
+            + (swBroken ? `<p class="offline-login">Seitenspeicher gestört: ${esc(swBroken)}. Neue Seiten werden nicht für offline gespeichert.</p>` : "")
+            + (env.APEX_BASE_VERSION && env.APEX_BASE_VERSION !== TESTED_APEX
+                ? `<p class="offline-stock">APEX ${esc(env.APEX_BASE_VERSION)}, zuletzt geprüft mit ${TESTED_APEX}: Release Notes gegen den Vertrag im README halten.</p>` : "")
             + `<p class="offline-stock">Offline verfügbar: ${stored} Seiten`
             + (stockState && stockState.at ? `, vollständig geladen ${when(stockState.at)}` : "")
             + (stockState && stockState.dropped ? `, ${stockState.dropped} nicht abrufbar` : "")
@@ -1055,25 +1064,37 @@
             }
             localStorage.setItem(userKey, env.APP_USER);
         }
-        const navBar = document.querySelector(".t-NavigationBar");   // Kopfleiste neben dem Benutzer
+        // Platz der Anzeige: Eintrag "Offline-Status" der Navigationsleiste (Builder, Ziel #offline-status)
+        const slot = document.querySelector('a[href$="#offline-status"]');
         if (env.APP_USER === "nobody") {
             // nicht angemeldet (Anmeldeseite): keine Anzeige - nie offline gespeichert, keine eigenen Entwürfe
-        } else if (navBar) {
-            const entry = document.createElement("li");
-            entry.className = "t-NavigationBar-item offline-status-item";
+        } else if (slot) {
+            const entry = document.createElement("span");
+            entry.className = "offline-status-item";
             entry.append(pill);
-            navBar.prepend(entry);
+            slot.replaceWith(entry);
         } else {
-            document.body.append(pill);           // Seite ohne Navigationsleiste: unten links
+            document.body.append(pill);           // ohne Eintrag: unten links
         }
-        if (document.body.classList.contains("online-only")) {   // Hinweis, der ohne Verbindung den Inhalt ersetzt
+        if (document.body.classList.contains("online-only")) {   // Hinweis, der ohne Verbindung die Seite ersetzt
             const notice = document.createElement("div");
             notice.className = "online-only-notice";
             notice.innerHTML = "<h2>Nur online verfügbar</h2><p>Diese Seite braucht eine Verbindung zum Server. "
-                + "Alle offline verfügbaren Seiten sind weiter über das Menü erreichbar.</p>"
-                + '<button type="button" class="t-Button">Erneut versuchen</button>';
-            notice.querySelector("button").addEventListener("click", () => location.reload());
-            (document.getElementById("main") || document.body).prepend(notice);
+                + "Die offline verfügbaren Seiten erreichen Sie mit „Zurück“.</p>"
+                + '<button type="button" class="t-Button" data-act="back">Zurück</button> '
+                + '<button type="button" class="t-Button" data-act="retry">Erneut versuchen</button>';
+            notice.addEventListener("click", e => {
+                const act = (e.target.closest("[data-act]") || { dataset: {} }).dataset.act;
+                if (act === "back") { history.back(); } else if (act === "retry") { location.reload(); }
+            });
+            document.body.prepend(notice);
+        }
+        if (env.APP_USER !== "nobody" && !document.getElementById("offline-page")) {
+            disable("Seitenkennung #offline-page fehlt (Region auf Seite 0)");
+        }
+        if (CONTROLLED) {                         // Seitenspeicher: beantwortet der eigene Hook die Probe?
+            fetch(BASE + "offline-probe").then(r => r.headers.get("x-offline-sw") === "1", () => false)
+                .then(ok => { if (!ok) { swBroken = "Service-Worker-Hook antwortet nicht"; refresh(); } });
         }
         await refresh();
         if (await check()) {
