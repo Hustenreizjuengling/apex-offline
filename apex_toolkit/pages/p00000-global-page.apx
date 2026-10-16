@@ -3,4 +3,27 @@ page 0 (
     appearance {
         templateOptions: #DEFAULT#
     }
+
+    // Kennung fuer offline.js und offline-sw.js: nur angemeldete Seiten dieser App tragen sie
+    // (nicht die Anmeldeseite, nicht die Fehlerseite von APEX). Daran erkennt die Offline-Schicht
+    // eine echte, speicherbare Seite - ohne APEX-Markup zu lesen.
+    region offline-kennung (
+        name: Offline-Kennung
+        type: staticContent
+        source {
+            htmlCode: <span id="offline-page" hidden></span>
+        }
+        layout {
+            sequence: 1000
+            slot: body
+        }
+        appearance {
+            template: @/blank-with-attributes
+            templateOptions: #DEFAULT#
+        }
+        serverSideCondition {
+            type: userIsAuthenticated
+        }
+    )
+
 )

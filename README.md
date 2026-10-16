@@ -55,7 +55,11 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
    `#APP_FILES#offline-sw.js`. Voraussetzung: HTTPS und Friendly URLs (Standard).
 4. **Security → Browser Security → Embed in Frames:** *Allow from same origin* (die Übertragung lädt
    die Seite unsichtbar in einem Rahmen der eigenen App).
-5. Empfohlen: **Session Management** – längere *Maximum Session Length / Idle Time* für Arbeitstage im
+5. **Globale Seite (Seite 0):** Region „Offline-Kennung“, Typ *Static Content*, Template *Blank with
+   Attributes*, HTML `<span id="offline-page" hidden></span>`, Server-side Condition *User is Authenticated
+   (not public)*. Nur Seiten mit dieser Kennung speichert der Service Worker; Anmelde- und Fehlerseiten
+   tragen sie nicht. Vorlage: `apex_toolkit/pages/p00000-global-page.apx`.
+6. Empfohlen: **Session Management** – längere *Maximum Session Length / Idle Time* für Arbeitstage im
    Außendienst (Beispiel-App: 24 h / 8 h). Solange die Sitzung gilt, wird ohne neue Anmeldung übertragen.
 
 ## Eine Seite offlinefähig machen (je Formularseite)
@@ -341,8 +345,8 @@ dieses Rezept beschreibt, wie sie zur Offline-Schicht passt.
    online öffnen. Abends die App online öffnen und im Vordergrund lassen, bis „offen“ verschwindet; steht dort
    „Anmeldung nötig“, in der Liste der Entwürfe *Anmelden und übertragen* tippen. Geräte, die sich mehrere teilen:
    vor der Übergabe alles übertragen (Entwürfe gehören ihrem Ersteller).
-8. **Gleiche Herkunft.** `#APEX_FILES#` muss vom eigenen Server kommen, nicht von einem CDN: die
-   Erreichbarkeitsprüfung fragt dort nach.
+8. **Gleiche Herkunft.** `#APEX_FILES#` muss vom eigenen Server kommen, nicht von einem CDN: der Service
+   Worker hält nur Dateien der eigenen Herkunft für offline vor.
 
 ## Release und Update
 
@@ -375,8 +379,9 @@ Was danach auf den Geräten passiert:
   ergänzt und speichert – es geht nichts still verloren.
 * Deshalb Felder auf Erfassungsseiten nicht umbenennen oder löschen, solange Geräte noch offline
   Erfasstes haben; bei größeren Umbauten vorher übertragen lassen.
-* Alte Dateiversionen bleiben im Browser (je Release rund 1–2 MB mit Barcode-Decoder). Aufräumen lässt
-  sich das über „Websitedaten löschen" im Browser – vorher alles übertragen.
+* Alte Dateiversionen bleiben im Browser (je Release rund 1–2 MB mit Barcode-Decoder), Dateien von APEX
+  selbst in einem eigenen Cache je APEX-Version. Aufräumen lässt sich das über „Websitedaten löschen" im
+  Browser – vorher alles übertragen.
 
 ## Woran die Schicht in APEX hängt
 
@@ -396,11 +401,9 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 | Ziel eines Buttons als Inline-Skript `apex.jQuery("#B…")…navigation.redirect('…')` | Vorrat: Ziele von Buttons | 1 |
 | Universal Theme: `.t-NavigationBar`, `#t_TreeNav`, `.t-Header-nav`, `#main`, `.t-Form-itemWrapper`, `.t-Region-body`, Druck-Klassen | Statusanzeige, Menülinks, Hinweis „Nur online“, Scan-Taste, offene Neuanlagen in der Region, Druck | 0, 1, 4, 9, 11, 12 |
 | Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
-| generierte `sw.js`: lädt die Hook-Datei per `importScripts` vor dem eigenen `fetch`-Listener; Hook `FUNCTION_VARIABLE_DECLARATION` mit `apex.sw.cleanAppCaches/cleanAPEXCaches`; `/i/` und `<app>/files/static/v…` aus dem eigenen Cache, alle anderen GET-Anfragen offline mit leerer Antwort | Seitenspeicher vor dem von APEX; alte Dateien behalten | 0, 1, 2, 9 |
-| Anmeldeseite = Passwortfeld und Seitenvorlage `t-PageBody--login` oder Weiterleitung auf einen anderen Pfad | Anmeldeseite nie speichern; Vorrat hält bei abgelaufener Sitzung an | 1, 8 |
-| Textdateien `wwv_flow.js_messages` / `js_dialogs` | gespeicherte Seiten offline vollständig | 2 |
-| `request.destination === "iframe"` im Service Worker (Übertragungsseite, APEX-Dialoge) | diese warten bis zu 30 s auf den Server statt 4 s | 6, 11 |
-| `#APEX_FILES#apex_version.txt` auf derselben Herkunft | Erreichbarkeitsprüfung (HEAD) | 2, 6 |
+| Service-Worker-Hooks `EVENT_INSTALL`, `EVENT_ACTIVATE`, `EVENT_FETCH` (dokumentiert: ersetzen das Ereignis ganz) | Seitenspeicher, statische Dateien, keine Aufräumlogik von APEX | 0, 1, 2, 9 |
+| `apex.env.APEX_FILES`, `APP_FILES`, `WORKSPACE_FILES`, `APEX_VERSION` (dokumentiert) | statische Dateien: Speicher zuerst, ein Cache je APEX-Version; Erreichbarkeit (HEAD auf `offline.js`) | 2, 6 |
+| eigene Seitenkennung `#offline-page` (Region auf Seite 0, nur für angemeldete Benutzer) | nur echte Seiten speichern; Anmelde- und Fehlerseite erkennen | 0, 1, 8 |
 | Parameter der Friendly URLs `session cs clear success_msg tz debug request` | Schlüssel gespeicherter Seiten, Aufruf mit der aktuellen Sitzung | 1–8 |
 | Prüfsummen auf Benutzerebene sind über Sitzungen gleich; Deep Linking; *Rejoin Sessions* wirkt nicht | Entwürfe überstehen eine neue Anmeldung | 8 |
 | große CLOB-Item-Werte werden beim Absenden in Stücken übertragen | Unterschrift und Foto als Data-URL | 11 |
@@ -409,9 +412,7 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 
 1. Die neue APEX-Version auf einer Testinstanz installieren und die App importieren.
 2. `npm test` ausführen. Schritt 0 prüft die Interna zuerst und nennt, was sich geändert hat.
-3. Die generierte `sw.js` der App ansehen (Adresse in den Entwicklertools unter *Application → Service Workers*):
-   Hook-Datei vor dem `fetch`-Listener, Hook-Namen, Cache-Regeln.
-4. Die Tabelle durchgehen.
+3. Die Tabelle durchgehen.
 
 ## Beispiel-App installieren
 

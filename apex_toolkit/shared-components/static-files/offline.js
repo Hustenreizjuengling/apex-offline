@@ -29,7 +29,11 @@
     const env = apex.env;
     const BASE = location.pathname.replace(/[^/]*$/, "");                 // /ords/r/<workspace>/<app>/
     const CACHE = "offline-pages:" + BASE;                                // gleicher Name in offline-sw.js
+    const FILES = "offline-files:" + BASE;                                // gleicher Name in offline-sw.js
+    const FILES_NOW = FILES + ":" + (env.APEX_VERSION || "");             // statische Dateien dieser APEX-Version
     const VOLATILE = ["session", "cs", "clear", "success_msg", "tz", "debug"]; // gleiche Liste in offline-sw.js
+    const MARK = 'id="offline-page"';                                     // Seitenkennung (Region auf Seite 0), gleich in offline-sw.js
+    const OWN_FILE = new URL(env.APP_FILES + "offline.js", document.baseURI).href;   // Erreichbarkeit: eigene Datei, liegt in der Datenbank
     const COPY = document.querySelector('meta[name="offline-copy"]');    // Seite kam offline aus dem Cache
     const IS_COPY = !!COPY;
     const COPY_AT = COPY && Number(COPY.content) > 1e12 ? Number(COPY.content) : 0;   // gespeichert um (ab 1.9.0)
@@ -433,10 +437,11 @@
     async function check() {
         let ok = navigator.onLine;
         if (ok) {
-            try {
-                await fetch(env.APEX_FILES + "apex_version.txt", {
+            try {               // HEAD geht am Service Worker vorbei; ab 500 antwortet ORDS, aber nicht die Datenbank
+                const res = await fetch(OWN_FILE, {
                     method: "HEAD", cache: "no-store", signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined
                 });
+                ok = res.status < 500;
             } catch (e) {
                 ok = false;
             }
@@ -707,8 +712,8 @@
      * hinter "Neuer Auftrag". Der Service Worker speichert jede geladene Seite. Ein unterbrochener Vorrat merkt
      * sich, wo er stand, und macht dort weiter; Seiten, die nicht kamen, versucht er erneut. */
 
-    function isLogin(res, html, href) {           // gleiche Regel in offline-sw.js
-        return html.includes('type="password"') && (html.includes("t-PageBody--login")
+    function isLogin(res, html, href) {           // ohne Kennung und mit Passwortfeld oder Weiterleitung: Anmeldeseite
+        return !html.includes(MARK) && (html.includes('type="password"')
             || (res.redirected && new URL(res.url).pathname !== new URL(href).pathname));
     }
 
@@ -771,15 +776,15 @@
             }
             if (isLogin(res, html, url.href)) { needLogin = true; stopped = true; break; }   // Sitzung abgelaufen
             queue.shift();
-            if (!res.ok || !html.includes('id="wwvFlowForm"')) { fail(url.href); keep(); continue; }   // Fehlerseite
+            if (!res.ok || !html.includes(MARK)) { fail(url.href); keep(); continue; }   // Fehlerseite
             seen.add(pageKey(url.href));
             decoder = decoder || html.includes("offline-scan");
             queue.push(...targets(new DOMParser().parseFromString(html, "text/html")));
             keep();
         }
         if (decoder && !decoderOk && !window.BarcodeDetector && !stopped && !leaving) {   // Barcode-Decoder für offline (iPhone, Windows, Firefox)
-            decoderOk = (await Promise.all(["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"]
-                .map(f => fetch(VENDOR + f).then(r => r.ok, () => false)))).every(Boolean);
+            decoderOk = await caches.open(FILES_NOW).then(c => c.addAll(["ponyfill.js", "zxing-exported.js", "zxing_reader.wasm"]
+                .map(f => VENDOR + f))).then(() => true, () => false);
         }
         if (leaving) { stocking = false; return; }   // kein Ergebnis melden: die Seite ist weg
         keep();
@@ -878,6 +883,21 @@
     }
     document.addEventListener("error", event => { if (event.target instanceof HTMLImageElement) { unavailable(event.target); } }, true);
 
+    // Pfade der statischen Dateien für offline-sw.js: dort gilt Speicher zuerst, ein Cache je APEX-Version.
+    // apex.env liefert APP_FILES und WORKSPACE_FILES relativ zu <base href>. Ältere Pfade bleiben gelistet:
+    // gespeicherte Seiten eines früheren Release verweisen noch auf sie.
+    function announceFiles() {
+        const key = location.origin + BASE + "offline-config";            // gleiche Adresse in offline-sw.js
+        const paths = [env.APEX_FILES, env.APP_FILES, env.WORKSPACE_FILES].filter(Boolean).map(p => new URL(p, document.baseURI).href);
+        return caches.open(FILES).then(async c => {
+            const old = await c.match(key).then(r => (r ? r.json() : {})).catch(() => ({}));
+            const next = { version: env.APEX_VERSION || "", paths: [...new Set([...paths, ...(old.paths || [])])].slice(0, 12) };
+            if (JSON.stringify(next) !== JSON.stringify(old)) {
+                await c.put(key, new Response(JSON.stringify(next), { headers: { "Content-Type": "application/json" } }));
+            }
+        }).catch(() => {});
+    }
+
     function whenControlled(fn) {                 // erst wenn der Service Worker die Seite kontrolliert, speichert er mit
         if (!navigator.serviceWorker) { return; }
         if (navigator.serviceWorker.controller) { fn(); } else { navigator.serviceWorker.addEventListener("controllerchange", () => fn(), { once: true }); }
@@ -905,6 +925,7 @@
         }
         flash();
         if (IN_FRAME) { return; }
+        if (!IS_COPY && window.caches) { announceFiles(); }
         // Anderer Benutzer auf diesem Gerät: gespeicherte Seiten des Vorgängers verwerfen
         if (!IS_COPY && env.APP_USER !== "nobody") {
             const userKey = "offline-user-" + env.APP_ID;

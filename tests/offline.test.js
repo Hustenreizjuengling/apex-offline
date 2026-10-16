@@ -128,11 +128,10 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             need(!!document.getElementById("wwvFlowForm"), "#wwvFlowForm");
             need(!!document.getElementById("pReloadOnSubmit"), "#pReloadOnSubmit");
             need(!!document.querySelector(".t-NavigationBar"), "Universal Theme .t-NavigationBar");
-            const sw = await navigator.serviceWorker.ready;
-            const source = await (await fetch(sw.active.scriptURL)).text();
-            const hook = source.indexOf("offline-sw.js"), listener = source.search(/addEventListener\(\s*["']fetch/);
-            need(hook >= 0 && listener > hook, "sw.js lädt den Hook vor dem eigenen fetch-Listener");
-            need(/FUNCTION_VARIABLE_DECLARATION/.test(source) && /cleanAppCaches/.test(source), "sw.js: Hook FUNCTION_VARIABLE_DECLARATION, apex.sw.cleanAppCaches");
+            need(!!document.getElementById("offline-page"), "Seitenkennung #offline-page (Region auf Seite 0)");
+            await navigator.serviceWorker.ready;
+            const probe = await fetch(location.pathname.replace(/[^/]*$/, "") + "offline-probe").catch(() => null);
+            need(!!probe && probe.headers.get("x-offline-sw") === "1", "Service-Worker-Hook EVENT_FETCH beantwortet die Probe");
             return missing;
         });
         check(internals.length === 0, "APEX-Interna vorhanden" + (internals.length ? " – geändert: " + internals.join(", ") : ""));
