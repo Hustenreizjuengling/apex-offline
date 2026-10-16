@@ -68,7 +68,7 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
 |---|---|---|
 | Page → Appearance → CSS Classes | `offline-form` | nur diese Seiten erfassen offline |
 | Primärschlüssel-Item → Security → Session State Protection | *Checksum Required – User Level* (der Formular-Assistent setzt *Session Level* – umstellen) | die Prüfsumme in Links bleibt nach neuer Anmeldung gültig |
-| Links und Buttons auf die Seite → Set Items | Primärschlüssel übergeben, bei „Neu" **leer** | ohne Item wäre die Prüfsumme an die Sitzung gebunden |
+| Links auf die Seite → Set Items | Primärschlüssel übergeben, bei „Neu" **leer** | ohne Item wäre die Prüfsumme an die Sitzung gebunden |
 | Buttons → Button Name | Builder-Standard behalten: `CREATE`, `SAVE`, `DELETE` | am Namen erkennt `offline.js` Neuanlage und Löschen; heißt der Anlegen-Button anders, überschreibt die nächste Offline-Neuanlage die vorige |
 | Page → Appearance → CSS Classes, zusätzlich (optional) | `offline-queue` | Speichern legt immer erst einen Entwurf an, auch online, kehrt sofort zurück und überträgt im Hintergrund; ein abgebrochenes Senden wird einfach wiederholt. Nur für Seiten, deren Prozess doppelt Gesendetes erkennt (Beispiel: Seite 4 „Foto“). Lehnt der Server ab, steht das in der Entwurfsliste (*fehler*), nicht am Feld |
 
@@ -107,24 +107,29 @@ sie zurück, lädt die Seite ihren aktuellen Inhalt. Eine gespeicherte Fassung z
 | `offline-signature` | Textarea-Item → Advanced → CSS Classes | Unterschriftenfeld; Wert ist ein Bild als Data-URL (Spalte CLOB, Session State Data Type CLOB, Label-Template „Optional – Above") |
 | `offline-photo` | Textarea-Item → Advanced → CSS Classes | Fotofeld: Kamera oder Galerie, Vorschau; das Bild wird im Browser auf höchstens 1600 Pixel verkleinert und ist als JPEG-Data-URL der Wert des Items (keine Formularspalte; Session State Data Type CLOB, Storage *Per Request*). Ein Prozess speichert es als Bild, siehe [Fotos am Auftrag](#fotos-am-auftrag) |
 | `offline-scan` | Textfeld-Item → Advanced → CSS Classes | Kamera-Taste für Barcode und QR-Code; Hand- und Bluetooth-Scanner tippen ohnehin ins Feld |
-| `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | die Ziele ihrer Links und Buttons gehören zum Offline-Vorrat (siehe unten) |
-| `offline-drafts` | Region → Appearance → CSS Classes | zeigt oben in der Region die noch nicht übertragenen Neuanlagen der Seiten, auf die ihre Links und Buttons zeigen – mit Vorschaubild, wenn es ein Foto ist, und Status. Am Auftrag also die Fotos hinter „Foto hinzufügen“, in der Liste die offline angelegten Aufträge. Alles kommt aus dem Gerät, nichts vom Server |
+| `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | die Ziele ihrer Links gehören zum Offline-Vorrat (siehe unten); Buttons zählen nicht |
+| `offline-drafts` | Region → Appearance → CSS Classes | zeigt oben in der Region die noch nicht übertragenen Neuanlagen der Seiten, auf die ihre Links zeigen – mit Vorschaubild, wenn es ein Foto ist, und Status. Am Auftrag also die Fotos hinter „Foto hinzufügen“, in der Liste die offline angelegten Aufträge. Alles kommt aus dem Gerät, nichts vom Server |
 | `offline-lightbox` | Region → Appearance → CSS Classes | Klick auf ein Bild in der Region zeigt es groß (auch die Vorschaubilder von `offline-drafts`) |
 
 ## Offline-Vorrat: was ohne vorheriges Öffnen offline verfügbar ist
 
 Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund – die Anzeige zeigt dabei „Online · lädt“:
 
-1. alle Seiten des **Navigationsmenüs**,
-2. von dort aus, auch mehrstufig, die Ziele aller **Links und Buttons in Regionen mit `offline-prefetch`**.
+1. alle Seiten des **Navigationsmenüs** – über die unsichtbare Region „Offline-Vorrat“ auf Seite 0 (Typ *List*,
+   Liste *Navigation Menu*, Template *Links List*, Klassen `offline-prefetch offline-hidden`, Bedingung *User is
+   Authenticated*),
+2. von dort aus, auch mehrstufig, die Ziele aller **Links in Regionen mit `offline-prefetch`**.
 
 In der Beispiel-App sind das die Auftragsliste (Menü), jeder Auftrag und jedes Protokoll (Links im Bericht),
-die Anlegeseite (Button „Neuer Auftrag" in derselben Region) und je Auftrag die Seite „Foto hinzufügen"
-(Button in der Region „Fotos" des Auftrags), dazu die Auswertung (Menü) – bei fünf Aufträgen 18 Seiten, ohne
-einen Klick. Die Liste der Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
+die Anlegeseite (Link „Neuer Auftrag“ über der Liste) und je Auftrag die Seite „Foto hinzufügen“ (Link in der
+Region „Fotos“ des Auftrags), dazu die Auswertung (Menü) – bei fünf Aufträgen 18 Seiten, ohne einen Klick. Die
+Liste der Entwürfe zeigt, wie viele Seiten offline verfügbar sind.
 
 Damit eine Seite zum Vorrat gehört, muss sie also im Menü stehen oder von einer `offline-prefetch`-Region
-aus verlinkt sein. Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
+aus **verlinkt** sein. Buttons zählen nicht: ihr Ziel steht nur im Skript, das APEX erzeugt. Ein Ziel, das offline
+gebraucht wird, bekommt einen Link, etwa eine Region *Dynamic Content* mit
+`apex_page.get_url(p_page => 4, p_items => 'P4_ID,P4_AUFTRAG_ID', p_values => ',' || :P2_ID)` – APEX hängt die
+Prüfsumme an wie bei einem Link aus dem Builder (Beispiel: Seiten 1 und 2; `p_values` trennt mit Kommas). Übersprungen werden Links mit Request (sie könnten auf der Zielseite etwas auslösen),
 Links auf modale Dialoge und fremde Apps sowie Download-Adressen wie `apex_util.get_blob`: **Bilder vom Server
 lädt der Vorrat nie.**
 
@@ -198,7 +203,7 @@ nötig“.
 Beispiel für Anhänge, die offline entstehen: beliebig viele Fotos je Auftrag in der Tabelle
 `OE_AUFTRAG_FOTO`. Die Seite 4 „Foto" ist ein natives Formular mit dem Textarea-Item `P4_FOTO` (CSS-Klasse
 `offline-photo`) und einer Bemerkung. Der Auftrag (Seite 2) listet seine Fotos in der Region „Fotos", deren
-Button „Foto hinzufügen" die Seite 4 mit dem Auftrag öffnet.
+Link „Foto hinzufügen“ die Seite 4 mit dem Auftrag öffnet.
 
 **Übertragen als Data-URL, gespeichert als Bild.** Das Foto wird im Browser auf 1600 Pixel verkleinert (etwa
 150–400 KB) und geht als Data-URL durch den normalen Submit von Seite 4 – online genauso wie bei der
@@ -309,9 +314,9 @@ dieses Rezept beschreibt, wie sie zur Offline-Schicht passt.
 
    Classic Report, *Number of Rows* über dem größten Tagesbestand, Termin in der Liste anzeigen (siehe
    [Offline-Vorrat](#offline-vorrat-was-ohne-vorheriges-öffnen-offline-verfügbar-ist)). Kommen die Aufträge aus
-   der Disposition, braucht die Liste keinen Button „Neuer Auftrag“: Neuanlagen sind neben Fotos die einzige
+   der Disposition, braucht die Liste keinen Link „Neuer Auftrag“: Neuanlagen sind neben Fotos die einzige
    Quelle für den Status *unklar*.
-3. **Vorrat schlank halten.** `offline-prefetch` nur dort, wo Auftragslink und Foto-Button stehen. Protokoll- und
+3. **Vorrat schlank halten.** `offline-prefetch` nur dort, wo Auftragslink und Foto-Link stehen. Protokoll- und
    Auswertungsseiten sind `online-only`; außerhalb von `offline-prefetch`-Regionen verlinkt, kosten sie keinen
    Aufruf beim Laden.
 4. **Umverteilte und stornierte Aufträge prüfen.** Die Übertragung vergleicht nur die Felder, die der Techniker
@@ -398,8 +403,8 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 | nach dem Ajax-Absenden ruft APEX `apex.navigation.redirect` oder `apex.message.showErrors` (in der Übertragungsseite ersetzt) | Ergebnis der Übertragung | 0, 6, 7 |
 | `apex.page.forEachPageItem` | genau die Items lesen, die APEX absendet | 0, 3–7 |
 | Markierungen `[data-for="ITEM"]` (geschütztes Item), `id="wwvFlowForm"`, `type="password"` | Prüfsummen-Items auslassen; echte Seite von Fehler- und Anmeldeseite unterscheiden | 0, 1, 3–8 |
-| Ziel eines Buttons als Inline-Skript `apex.jQuery("#B…")…navigation.redirect('…')` | Vorrat: Ziele von Buttons | 1 |
-| Universal Theme: `.t-NavigationBar`, `#t_TreeNav`, `.t-Header-nav`, `#main`, `.t-Form-itemWrapper`, `.t-Region-body`, Druck-Klassen | Statusanzeige, Menülinks, Hinweis „Nur online“, Scan-Taste, offene Neuanlagen in der Region, Druck | 0, 1, 4, 9, 11, 12 |
+| Region *List* und *Dynamic Content* (`apex_page.get_url`, dokumentiert): APEX erzeugt `<a href>` mit Prüfsumme | Vorrat: Menüseiten, „Neuer Auftrag“, „Foto hinzufügen“ | 1 |
+| Universal Theme: `.t-NavigationBar`, `#main`, `.t-Form-itemWrapper`, Druck-Klassen | Statusanzeige, Hinweis „Nur online“, Scan-Taste, Druck | 0, 4, 9, 11, 12 |
 | Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
 | Service-Worker-Hooks `EVENT_INSTALL`, `EVENT_ACTIVATE`, `EVENT_FETCH` (dokumentiert: ersetzen das Ereignis ganz) | Seitenspeicher, statische Dateien, keine Aufräumlogik von APEX | 0, 1, 2, 9 |
 | `apex.env.APEX_FILES`, `APP_FILES`, `WORKSPACE_FILES`, `APEX_VERSION` (dokumentiert) | statische Dateien: Speicher zuerst, ein Cache je APEX-Version; Erreichbarkeit (HEAD auf `offline.js`) | 2, 6 |

@@ -26,4 +26,32 @@ page 0 (
         }
     )
 
+    // Offline-Vorrat: dieselbe Liste wie das Navigationsmenue, unsichtbar. Ihre Links (APEX berechnet
+    // Adressen und Pruefsummen) laedt offline.js im Hintergrund vor.
+    region offline-vorrat (
+        name: Offline-Vorrat
+        type: list
+        source {
+            list: @navigation-menu
+        }
+        layout {
+            sequence: 1010
+            slot: body
+        }
+        appearance {
+            template: @/blank-with-attributes
+            templateOptions: #DEFAULT#
+            cssClasses: [
+                offline-prefetch
+                offline-hidden
+            ]
+        }
+        componentAppearance {
+            listTemplate: @/links-list
+        }
+        serverSideCondition {
+            type: userIsAuthenticated
+        }
+    )
+
 )

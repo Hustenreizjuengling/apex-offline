@@ -221,7 +221,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.goBack();
 
         console.log("4. Offline neuen Auftrag anlegen");
-        await Promise.all([page.waitForURL(/auftrag/), page.getByRole("button", { name: "Neuer Auftrag" }).click()]);
+        await Promise.all([page.waitForURL(/auftrag/), page.getByRole("link", { name: "Neuer Auftrag" }).click()]);
         await page.waitForSelector("#P2_NR");
         await page.fill("#P2_NR", RUN);
         await page.fill("#P2_TITEL", "Offline angelegt " + RUN);
@@ -276,7 +276,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await openOrder(page, "A-1003");
         await page.fill("#P2_BEFUND", "Nach Anmeldung " + RUN);
         await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Speichern" }).click()]);
-        await Promise.all([page.waitForURL(/auftrag/), page.getByRole("button", { name: "Neuer Auftrag" }).click()]);
+        await Promise.all([page.waitForURL(/auftrag/), page.getByRole("link", { name: "Neuer Auftrag" }).click()]);
         await page.waitForSelector("#P2_NR");
         await page.fill("#P2_NR", RUN + "B");
         await page.fill("#P2_TITEL", "Nach Anmeldung angelegt " + RUN);
@@ -346,7 +346,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await field.setOffline(true);
         await page.reload();
         await openOrder(page, RUN);
-        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);
+        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("link", { name: "Foto hinzufügen" }).click()]);
         await page.setInputFiles(".offline-photo-box input[type=file]", require("path").join(__dirname, "fixtures", "foto.jpg"));
         await waitFor(async () => (await page.inputValue("#P4_FOTO")).startsWith("data:image/jpeg"), 10000, "Foto verkleinert");
         const photo = await page.evaluate(async () => {
@@ -367,7 +367,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             const d = all.find(x => x.page === "4");
             await new Promise(r => { const t = db.transaction("drafts", "readwrite"); t.objectStore("drafts").put({ ...d, id: d.id + "-kopie", ts: d.ts + 1 }); t.oncomplete = r; });
         });
-        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);
+        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("link", { name: "Foto hinzufügen" }).click()]);
         await page.evaluate(value => apex.item("P4_FOTO").setValue(value), corrupt);   // PNG-Kopf über JPEG-Bytes
         await page.fill("#P4_BEMERKUNG", "Beschädigt " + RUN);
         await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
@@ -429,7 +429,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await openOrder(page, RUN);
 
         console.log("11c. Großes Foto online (gut 1 MB als Data-URL): Grenze für Formular-POSTs");
-        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("button", { name: "Foto hinzufügen" }).click()]);
+        await Promise.all([page.waitForURL(/foto\?/), page.getByRole("link", { name: "Foto hinzufügen" }).click()]);
         const big = await page.evaluate(() => {
             const canvas = document.createElement("canvas");
             canvas.width = 1600; canvas.height = 1200;

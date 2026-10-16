@@ -43,10 +43,7 @@ page 1 (
         appearance {
             template: @/standard
             templateOptions: #DEFAULT#
-            cssClasses: [
-                offline-prefetch
-                offline-drafts
-            ]
+            cssClasses: offline-prefetch
         }
         reportLayout {
             numberOfRows: 100
@@ -141,28 +138,37 @@ page 1 (
         )
     )
 
-    button neu (
-        buttonName: NEU
-        label: Neuer Auftrag
+    // "Neuer Auftrag" als Link (nicht als Button): nur Links gehoeren zum Offline-Vorrat. Die Adresse samt
+    // Pruefsumme berechnet apex_page.get_url; der Primaerschluessel bleibt leer (Pruefsumme auf Benutzerebene).
+    // offline-drafts: hier erscheinen die offline angelegten, noch nicht uebertragenen Auftraege.
+    region neu (
+        name: Neuer Auftrag
+        type: dynamicContent
+        source {
+            language: plsql
+            plsqlFunctionBody:
+                ```plsql
+                return '<p style="margin: 0 0 8px"><a class="t-Button t-Button--hot" href="'
+                    || apex_escape.html_attribute(apex_page.get_url(
+                           p_page        => 2,
+                           p_clear_cache => '2',
+                           p_items       => 'P2_ID',
+                           p_values      => null))
+                    || '">Neuer Auftrag</a></p>';
+                ```
+        }
         layout {
-            sequence: 10
-            region: @auftraege
-            slot: create
+            sequence: 5
+            parentRegion: @auftraege
+            slot: regionBody
         }
         appearance {
-            buttonTemplate: @/text
-            hot: true
+            template: @/blank-with-attributes
             templateOptions: #DEFAULT#
-        }
-        behavior {
-            action: redirectThisApp
-            target: {
-                page: 2
-                items: {
-                    P2_ID:
-                }
-                clearCache: 2
-            }
+            cssClasses: [
+                offline-prefetch
+                offline-drafts
+            ]
         }
     )
 

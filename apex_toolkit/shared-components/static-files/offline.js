@@ -13,10 +13,10 @@
  *        offline-signature   Textarea wird zum Unterschriftenfeld (Wert: Bild als Data-URL)
  *        offline-photo       Textarea wird zum Fotofeld: Kamera oder Galerie, verkleinert (Wert: Bild als Data-URL)
  *        offline-scan        Textfeld bekommt eine Kamera-Taste für Barcode und QR-Code
- *        offline-prefetch    (Region) Ziele ihrer Links und Buttons werden im Hintergrund offline verfügbar
- *                            gemacht - zusammen mit allen Seiten des Navigationsmenüs (Offline-Vorrat)
- *        offline-drafts      (Region) zeigt die noch nicht übertragenen Neuanlagen der Seiten, auf die ihre Links
- *                            und Buttons zeigen - z. B. am Auftrag die Fotos hinter "Foto hinzufügen"
+ *        offline-prefetch    (Region) Ziele ihrer Links werden im Hintergrund offline verfügbar gemacht
+ *                            (Offline-Vorrat); die Menüseiten kommen über die Region "Offline-Vorrat" auf Seite 0
+ *        offline-drafts      (Region) zeigt in sich die noch nicht übertragenen Neuanlagen der Seiten, auf die
+ *                            ihre Links zeigen - z. B. am Auftrag die Fotos hinter "Foto hinzufügen"
  *        offline-lightbox    (Region) Klick auf ein Bild zeigt es groß
  *   4. Seiten nur für online (Page > Appearance > CSS Classes: online-only): ohne Verbindung zeigen sie
  *      statt des Inhalts einen Hinweis (offline.css), mit Verbindung wieder den aktuellen Inhalt.
@@ -707,9 +707,9 @@
     }
 
     /* ---------- 3d. Offline-Vorrat: alle offline benötigten Seiten im Hintergrund laden ----------
-     * Je Sitzung: alle Seiten des Navigationsmenüs und von dort aus (auch mehrstufig) alle Ziele von Links und
-     * Buttons in Regionen mit der CSS-Klasse offline-prefetch - z. B. jeder Auftrag der Liste und die Seite
-     * hinter "Neuer Auftrag". Der Service Worker speichert jede geladene Seite. Ein unterbrochener Vorrat merkt
+     * Je Sitzung: alle Ziele von Links in Regionen mit der CSS-Klasse offline-prefetch, auch mehrstufig - die
+     * Menüseiten (Region "Offline-Vorrat" auf Seite 0), jeder Auftrag der Liste, die Seite hinter "Neuer
+     * Auftrag". Der Service Worker speichert jede geladene Seite. Ein unterbrochener Vorrat merkt
      * sich, wo er stand, und macht dort weiter; Seiten, die nicht kamen, versucht er erneut. */
 
     function isLogin(res, html, href) {           // ohne Kennung und mit Passwortfeld oder Weiterleitung: Anmeldeseite
@@ -717,17 +717,10 @@
             || (res.redirected && new URL(res.url).pathname !== new URL(href).pathname));
     }
 
-    function targetsIn(roots, doc) {              // Ziele der Links und Buttons in diesen Elementen
-        const urls = roots.flatMap(r => [...r.querySelectorAll("a[href]")].map(a => a.getAttribute("href")));
-        const scripts = [...doc.querySelectorAll("script:not([src])")].map(s => s.textContent).join("\n");
-        roots.forEach(r => r.querySelectorAll("button[id]").forEach(b => {
-            // APEX bindet das Ziel eines Buttons per Skript: apex.jQuery("#B123").on("click", ... redirect('...'))
-            const m = scripts.match(new RegExp('"#' + b.id + '"[^]{0,120}?navigation\\.redirect\\(\'([^\']+)\''));
-            if (m) { try { urls.push(JSON.parse('"' + m[1] + '"')); } catch (e) { /* anderes Format: überspringen */ } }
-        }));
-        return urls;
-    }
-    const targets = doc => targetsIn([...doc.querySelectorAll(".offline-prefetch")], doc);   // für den Vorrat
+    // Ziele der Links in diesen Elementen. Nur echte Links (<a href>): ihre Adressen samt Prüfsumme erzeugt APEX.
+    // Buttons tragen nichts bei - ihr Ziel stünde nur im erzeugten Skript.
+    const targetsIn = roots => roots.flatMap(r => [...r.querySelectorAll("a[href]")].map(a => a.getAttribute("href")));
+    const targets = doc => targetsIn([...doc.querySelectorAll(".offline-prefetch")]);   // für den Vorrat
 
     async function stock(fresh) {                 // fresh: alles neu laden ("Vorrat neu laden")
         if (stocking || needLogin || IS_COPY || env.APP_USER === "nobody") { return; }
@@ -739,8 +732,8 @@
         if (Array.isArray(saved)) { saved = { seen: saved }; }    // Format bis 1.8
         const seen = new Set(saved.seen || []);
         if (CONTROLLED && !fresh) { seen.add(pageKey(location.href)); }   // diese Seite hat der Service Worker schon gespeichert
-        const queue = [...(saved.rest || []), location.href, ...[...document.querySelectorAll("#t_TreeNav a[href], .t-Header-nav a[href]")]
-            .map(a => a.getAttribute("href")), ...targets(document)];
+        // diese Seite und alle Links in offline-prefetch - auch die Region "Offline-Vorrat" auf Seite 0 (Menüseiten)
+        const queue = [...(saved.rest || []), location.href, ...targets(document)];
         const failed = new Set();                 // in diesem Durchlauf nicht gekommen: beim nächsten Mal erneut
         const tries = saved.tries || {};          // Fehlversuche je Seite in dieser Sitzung
         const dropped = new Set(saved.dropped || []);   // nach 3 Fehlversuchen: nicht abrufbar, kein weiterer Versuch
@@ -796,7 +789,7 @@
     }
 
     /* ---------- 3e. Offene Neuanlagen am Ort: Region mit der CSS-Klasse offline-drafts ----------
-     * Zeigt die noch nicht übertragenen Neuanlagen der Seiten, auf die Links und Buttons der Region zeigen - am
+     * Zeigt in der Region die noch nicht übertragenen Neuanlagen der Seiten, auf die ihre Links zeigen - am
      * Auftrag also die Fotos hinter "Foto hinzufügen", in der Liste die offline angelegten Aufträge. Sie liegen
      * ohnehin auf dem Gerät; nichts davon kommt vom Server. */
 
@@ -820,12 +813,11 @@
         pictureUrls.forEach(u => URL.revokeObjectURL(u));
         pictureUrls = [];
         regions.forEach(region => {
-            const keys = new Set(targetsIn([region], document).map(h => { try { return pageKey(h); } catch (e) { return ""; } }));
+            const keys = new Set(targetsIn([region]).map(h => { try { return pageKey(h); } catch (e) { return ""; } }));
             const mine = list.filter(d => d.create && keys.has(d.key));
-            const body = region.querySelector(".t-Region-body") || region;
-            let box = [...body.children].find(e => e.classList.contains("offline-drafts-list"));
+            let box = [...region.children].find(e => e.classList.contains("offline-drafts-list"));
             if (!mine.length) { if (box) { box.remove(); } return; }
-            if (!box) { box = document.createElement("ul"); box.className = "offline-drafts-list"; body.prepend(box); }
+            if (!box) { box = document.createElement("ul"); box.className = "offline-drafts-list"; region.prepend(box); }
             box.replaceChildren(...mine.map(d => {
                 const li = document.createElement("li");
                 const src = picture(d);

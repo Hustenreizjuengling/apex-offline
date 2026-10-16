@@ -14,6 +14,9 @@
 /* Seiten ohne Navigationsleiste: unten links */
 body > .offline-status { position: fixed; left: 12px; bottom: 12px; z-index: 900; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
 
+/* Region, die nur für die Offline-Schicht da ist (z. B. der Offline-Vorrat auf Seite 0) */
+.offline-hidden { display: none !important; }
+
 /* Links auf Datensätze mit offenem Entwurf */
 a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; font-size: .8em; }
 

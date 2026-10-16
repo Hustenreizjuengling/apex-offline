@@ -69,8 +69,6 @@ page 2 (
             template: @/standard
             templateOptions: #DEFAULT#
             cssClasses: [
-                offline-prefetch
-                offline-drafts
                 offline-lightbox
                 oe-fotos
             ]
@@ -141,29 +139,37 @@ page 2 (
         )
     )
 
-    button foto-hinzufuegen (
-        buttonName: FOTO
-        label: Foto hinzufügen
+    // "Foto hinzufügen" als Link (nicht als Button): nur Links gehoeren zum Offline-Vorrat. Adresse und
+    // Pruefsumme berechnet apex_page.get_url, der Primaerschluessel P4_ID bleibt leer.
+    // offline-drafts: hier erscheinen die noch nicht uebertragenen Fotos dieses Auftrags.
+    region foto-link (
+        name: Foto hinzufügen
+        type: dynamicContent
+        source {
+            language: plsql
+            plsqlFunctionBody:
+                ```plsql
+                return '<p style="margin: 0 0 8px"><a class="t-Button" href="'
+                    || apex_escape.html_attribute(apex_page.get_url(
+                           p_page        => 4,
+                           p_clear_cache => '4',
+                           p_items       => 'P4_ID,P4_AUFTRAG_ID,P4_NR',
+                           p_values      => ',' || :P2_ID || ',' || :P2_NR))
+                    || '">Foto hinzufügen</a></p>';
+                ```
+        }
         layout {
-            sequence: 10
-            region: @fotos
-            slot: create
+            sequence: 5
+            parentRegion: @fotos
+            slot: regionBody
         }
         appearance {
-            buttonTemplate: @/text
+            template: @/blank-with-attributes
             templateOptions: #DEFAULT#
-        }
-        behavior {
-            action: redirectThisApp
-            target: {
-                page: 4
-                items: {
-                    P4_ID:
-                    P4_AUFTRAG_ID: &P2_ID.
-                    P4_NR: &P2_NR.
-                }
-                clearCache: 4
-            }
+            cssClasses: [
+                offline-prefetch
+                offline-drafts
+            ]
         }
     )
 
