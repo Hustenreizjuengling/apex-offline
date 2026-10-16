@@ -21,12 +21,14 @@ der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst
    offline gebraucht werden – ohne dass sie jemand öffnen muss (siehe unten). Der Service Worker speichert
    sie und jede weitere aufgerufene Seite. Ohne Verbindung (oder wenn der Server 4 Sekunden nicht
    antwortet) liefert er die zuletzt gespeicherte Fassung; die Anzeige nennt dann ihren Stand.
-2. **Offline speichern:** Auf Seiten mit der CSS-Klasse `offline-form` fängt `offline.js` das Absenden
-   ab, wenn der Server nicht erreichbar ist, prüft die Pflichtfelder wie online und legt nur die
-   **geänderten Felder** (alter und neuer Wert) als Entwurf im Browser ab (IndexedDB).
-3. **Übertragen:** Sobald der Server wieder erreichbar ist, lädt `offline.js` jede betroffene Seite
-   unsichtbar, setzt die erfassten Werte und sendet sie ab – wie ein Anwender es täte. Erfolg,
-   Validierungsfehler und Verbindungsabbruch werden erkannt.
+2. **Speichern:** Auf Seiten mit der CSS-Klasse `offline-form` übernimmt die Dynamic Action
+   „Offline-Erfassung“ der Seite 0 das Absenden (Aktion *Cancel Event*). `offline.js` prüft die Pflichtfelder
+   wie online und legt nur die **geänderten Felder** (alter und neuer Wert) als Entwurf im Browser ab
+   (IndexedDB) – online wie offline.
+3. **Übertragen:** `offline.js` lädt die Seite unsichtbar, setzt die erfassten Werte und sendet sie ab – wie ein
+   Anwender es täte. Online sofort, und die Seite wartet auf das Ergebnis wie beim normalen Speichern; ohne
+   Verbindung, sobald der Server wieder erreichbar ist. Erfolg, Ablehnung und Verbindungsabbruch werden
+   erkannt.
 4. **Konflikte:** Hat jemand dasselbe Feld inzwischen auf dem Server geändert, wird nichts
    überschrieben. Der Anwender öffnet den Entwurf, sieht den Server-Wert direkt am Feld und entscheidet.
 
@@ -55,10 +57,15 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
    `#APP_FILES#offline-sw.js`. Voraussetzung: HTTPS und Friendly URLs (Standard).
 4. **Security → Browser Security → Embed in Frames:** *Allow from same origin* (die Übertragung lädt
    die Seite unsichtbar in einem Rahmen der eigenen App).
-5. **Globale Seite (Seite 0):** Region „Offline-Kennung“, Typ *Static Content*, Template *Blank with
-   Attributes*, HTML `<span id="offline-page" hidden></span>`, Server-side Condition *User is Authenticated
-   (not public)*. Nur Seiten mit dieser Kennung speichert der Service Worker; Anmelde- und Fehlerseiten
-   tragen sie nicht. Vorlage: `apex_toolkit/pages/p00000-global-page.apx`.
+5. **Globale Seite (Seite 0):** drei Komponenten, Vorlage `apex_toolkit/pages/p00000-global-page.apx`:
+   * Region „Offline-Kennung“, Typ *Static Content*, Template *Blank with Attributes*, HTML
+     `<span id="offline-page" hidden></span>`, Server-side Condition *User is Authenticated (not public)*. Nur
+     Seiten mit dieser Kennung speichert der Service Worker; Anmelde- und Fehlerseiten tragen sie nicht.
+   * Region „Offline-Vorrat“, Typ *List*, Liste *Navigation Menu*, Template *Links List*, CSS-Klassen
+     `offline-prefetch offline-hidden`, Bedingung wie oben: die Menüseiten für den Offline-Vorrat.
+   * Dynamic Action „Offline-Erfassung“: Ereignis *Before Page Submit*, Client-side Condition *JavaScript
+     Expression* `!!window.offlineCapture && window.offlineCapture.takes(this.data)`, Aktionen 1. *Execute
+     JavaScript Code* `window.offlineCapture.save(this.data);` 2. *Cancel Event*.
 6. Empfohlen: **Session Management** – längere *Maximum Session Length / Idle Time* für Arbeitstage im
    Außendienst (Beispiel-App: 24 h / 8 h). Solange die Sitzung gilt, wird ohne neue Anmeldung übertragen.
 
@@ -67,10 +74,11 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
 | Wo im Builder | Einstellung | Warum |
 |---|---|---|
 | Page → Appearance → CSS Classes | `offline-form` | nur diese Seiten erfassen offline |
+| Page → Appearance → Page Mode | *Normal* | Erfassungsseiten sind keine modalen Dialoge: ein *Close Dialog* im unsichtbaren Rahmen würde den obersten Dialog des Hauptfensters schließen |
 | Primärschlüssel-Item → Security → Session State Protection | *Checksum Required – User Level* (der Formular-Assistent setzt *Session Level* – umstellen) | die Prüfsumme in Links bleibt nach neuer Anmeldung gültig |
 | Links auf die Seite → Set Items | Primärschlüssel übergeben, bei „Neu" **leer** | ohne Item wäre die Prüfsumme an die Sitzung gebunden |
 | Buttons → Button Name | Builder-Standard behalten: `CREATE`, `SAVE`, `DELETE` | am Namen erkennt `offline.js` Neuanlage und Löschen; heißt der Anlegen-Button anders, überschreibt die nächste Offline-Neuanlage die vorige |
-| Page → Appearance → CSS Classes, zusätzlich (optional) | `offline-queue` | Speichern legt immer erst einen Entwurf an, auch online, kehrt sofort zurück und überträgt im Hintergrund; ein abgebrochenes Senden wird einfach wiederholt. Nur für Seiten, deren Prozess doppelt Gesendetes erkennt (Beispiel: Seite 4 „Foto“). Lehnt der Server ab, steht das in der Entwurfsliste (*fehler*), nicht am Feld |
+| Page → Appearance → CSS Classes, zusätzlich (optional) | `offline-queue` | Speichern kehrt auch online sofort zurück und überträgt im Hintergrund; ein abgebrochenes Senden wird einfach wiederholt. Nur für Seiten, deren Prozess doppelt Gesendetes erkennt (Beispiel: Seite 4 „Foto“). Lehnt der Server ab, steht das in der Entwurfsliste (*fehler*), nicht am Feld |
 
 Alles andere bleibt wie gewohnt: Felder, Pflichtfelder, Validierungen, *Form – Automatic Row
 Processing*, Verzweigungen. Beispiel: `apex_toolkit/pages/p00002-auftrag.apx`.
@@ -82,9 +90,10 @@ Beim Offline-Speichern prüft der Browser alles, was APEX am **Item selbst** fes
 Diese Regeln gelten online zusätzlich auf dem Server – eine Regel, an einer Stelle, ohne JavaScript.
 Beispiel: `P2_MESSWERT` mit Minimum 30 und Maximum 90 lehnt 150 offline sofort am Feld ab.
 
-**Validierungen** (Page → Validations, PL/SQL) brauchen die Datenbank. Sie laufen bei der Übertragung;
-schlägt eine fehl, bekommt der Entwurf den Status *fehler* mit der Meldung, und der Anwender korrigiert ihn
-auf der Seite. Einfache Bereichs- und Pflichtprüfungen deshalb am Item festlegen, echte Geschäftsregeln
+**Validierungen** (Page → Validations, PL/SQL) brauchen die Datenbank. Sie laufen bei der Übertragung.
+Online erscheint ihre Meldung oben auf der Seite (nicht am Feld), die Eingaben bleiben stehen. Nach einem
+Funkloch bekommt der Entwurf den Status *fehler* mit der Meldung; der Anwender öffnet ihn, sieht die Meldung
+oben und korrigiert. Einfache Bereichs- und Pflichtprüfungen deshalb am Item festlegen, echte Geschäftsregeln
 (Abgleich mit anderen Tabellen, mehrere Datensätze) als Validierung.
 
 Die Meldungen der Browser-Prüfung sind APEX-Texte. `shared-components/messages.apx` stellt die wichtigsten
@@ -278,6 +287,10 @@ darstellen kann.
   bricht ab und wird später erneut versucht. Wer während der Übertragung die Seite wechselt, startet sie neu
   (doppelt Gesendetes erkennt der Server). Übertragen wird nur, solange die App offen ist – abends die App online
   im Vordergrund lassen, bis „offen“ verschwindet.
+* Gegen gleichzeitige Änderungen prüft die Schicht feldweise: zwei Anwender, die verschiedene Felder ändern,
+  behalten beide ihre Werte. *Prevent Lost Updates* des Formulars greift nicht, weil die Übertragung den aktuellen
+  Stand lädt; dasselbe Feld wird nie still überschrieben (*konflikt*).
+* Online dauert Speichern um einen Seitenaufruf länger: die Übertragung lädt die Seite, bevor sie sendet.
 * Anmelden geht nur online. *Rejoin Sessions* wirkt auf der Instanz nicht; die installierte App startet
   online deshalb mit der Anmeldung, offline mit der gespeicherten Startseite.
 * Auf iPhone/iPad bleiben die Daten nur dauerhaft erhalten, wenn die App zum Home-Bildschirm hinzugefügt
@@ -397,19 +410,18 @@ den Schritt in `tests/offline.test.js`, der einen Bruch bemerkt.
 
 | Was | wofür | Test |
 |---|---|---|
-| Ereignis `apexbeforepagesubmit` und Flag `apex.event.gCancelFlag` (gebunden in `apexreadyend`) | Absenden ohne Verbindung abbrechen | 0, 3, 4 |
-| verstecktes Feld `#pReloadOnSubmit` | Absenden per Ajax erzwingen, damit ein Abbruch erkannt wird | 0, 3 |
-| Absenden = `apex.jQuery.ajax`-POST an `wwv_flow.accept`; Erfolg = `responseJSON.redirectURL`; Status 0 oder ab 502 = Server weg | Zeitlimit, abgebrochenes Speichern erkennen | 6, 8, 11 |
-| nach dem Ajax-Absenden ruft APEX `apex.navigation.redirect` oder `apex.message.showErrors` (in der Übertragungsseite ersetzt) | Ergebnis der Übertragung | 0, 6, 7 |
-| `apex.page.forEachPageItem` | genau die Items lesen, die APEX absendet | 0, 3–7 |
-| Markierungen `[data-for="ITEM"]` (geschütztes Item), `id="wwvFlowForm"`, `type="password"` | Prüfsummen-Items auslassen; echte Seite von Fehler- und Anmeldeseite unterscheiden | 0, 1, 3–8 |
+| Dynamic Action *Before Page Submit* mit Aktion *Cancel Event* (dokumentiert für `apexbeforepagesubmit`), `this.data` = Request | Speichern übernehmen | 3, 4, 13b |
+| `apex.page.submit({ request, reloadOnSubmit: "S" })` (dokumentiert): APEX lädt nur nach erfolgreicher Verarbeitung neu | Erfolg der Übertragung = neue Seite im Rahmen | 6, 13b |
+| `apex.message.setThemeHooks` / `apex.message.TYPE` (dokumentiert), im unsichtbaren Rahmen | Ablehnung der Übertragung und ihre Meldungen | 7, 11, 13b |
+| `apex.items`, `apex.item().getValue/setValue` (dokumentiert) | Items lesen und setzen | 3–7 |
+| Ereignis `apexpagesubmit` (dokumentiert) | Selbstprüfung: APEX sendet trotz *Cancel Event* selbst, Dynamic Action fehlt | – |
 | Region *List* und *Dynamic Content* (`apex_page.get_url`, dokumentiert): APEX erzeugt `<a href>` mit Prüfsumme | Vorrat: Menüseiten, „Neuer Auftrag“, „Foto hinzufügen“ | 1 |
 | Universal Theme: `.t-NavigationBar`, `#main`, `.t-Form-itemWrapper`, Druck-Klassen | Statusanzeige, Hinweis „Nur online“, Scan-Taste, Druck | 0, 4, 9, 11, 12 |
 | Dialog-Container `apex_dialog_…`, `.ui-dialog--apex` | Dialog nach dem Speichern schließen; nicht neu laden, solange ein Dialog offen ist | – |
 | Service-Worker-Hooks `EVENT_INSTALL`, `EVENT_ACTIVATE`, `EVENT_FETCH` (dokumentiert: ersetzen das Ereignis ganz) | Seitenspeicher, statische Dateien, keine Aufräumlogik von APEX | 0, 1, 2, 9 |
 | `apex.env.APEX_FILES`, `APP_FILES`, `WORKSPACE_FILES`, `APEX_VERSION` (dokumentiert) | statische Dateien: Speicher zuerst, ein Cache je APEX-Version; Erreichbarkeit (HEAD auf `offline.js`) | 2, 6 |
 | eigene Seitenkennung `#offline-page` (Region auf Seite 0, nur für angemeldete Benutzer) | nur echte Seiten speichern; Anmelde- und Fehlerseite erkennen | 0, 1, 8 |
-| Parameter der Friendly URLs `session cs clear success_msg tz debug request` | Schlüssel gespeicherter Seiten, Aufruf mit der aktuellen Sitzung | 1–8 |
+| Parameter der Friendly URLs, nur die dokumentierten (`session cs dialogCs clear debug trace timezone`); auf der eigenen Seite zählen sonst nur Parameter, die Items sind | Schlüssel gespeicherter Seiten und Entwürfe, Aufruf mit der aktuellen Sitzung | 1–8 |
 | Prüfsummen auf Benutzerebene sind über Sitzungen gleich; Deep Linking; *Rejoin Sessions* wirkt nicht | Entwürfe überstehen eine neue Anmeldung | 8 |
 | große CLOB-Item-Werte werden beim Absenden in Stücken übertragen | Unterschrift und Foto als Data-URL | 11 |
 

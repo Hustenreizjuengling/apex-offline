@@ -54,4 +54,40 @@ page 0 (
         }
     )
 
+    // Offline-Erfassung: auf Seiten mit offline-form uebernimmt offline.js das Speichern (Entwurf, dann
+    // Absenden im unsichtbaren Rahmen durch dieselbe Seite). Abgebrochen wird mit der APEX-Aktion
+    // Cancel Event - so beschreibt es die Dokumentation von apexbeforepagesubmit. this.data ist der Request.
+    dynamicAction offline-erfassung (
+        name: Offline-Erfassung
+        execution {
+            sequence: 10
+        }
+        when {
+            event: apexbeforepagesubmit
+        }
+        clientSideCondition {
+            type: jsExpression
+            javaScriptExpression: !!window.offlineCapture && window.offlineCapture.takes(this.data)
+        }
+
+        action offline-erfassung-sichern (
+            action: executeJsCode
+            settings {
+                jsCode: window.offlineCapture.save(this.data);
+            }
+            execution {
+                sequence: 10
+                fireOnInit: false
+            }
+        )
+
+        action offline-erfassung-abbrechen (
+            action: cancelEvent
+            execution {
+                sequence: 20
+                fireOnInit: false
+            }
+        )
+    )
+
 )

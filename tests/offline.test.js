@@ -121,12 +121,10 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         const internals = await page.evaluate(async () => {
             const missing = [];
             const need = (ok, what) => { if (!ok) { missing.push(what); } };
-            need(typeof apex.page.forEachPageItem === "function", "apex.page.forEachPageItem");
-            need("gCancelFlag" in apex.event, "apex.event.gCancelFlag");
-            need(typeof apex.navigation.redirect === "function", "apex.navigation.redirect");
-            need(typeof apex.message.showErrors === "function", "apex.message.showErrors");
-            need(!!document.getElementById("wwvFlowForm"), "#wwvFlowForm");
-            need(!!document.getElementById("pReloadOnSubmit"), "#pReloadOnSubmit");
+            need(typeof apex.items === "object", "apex.items");
+            need(typeof apex.message.setThemeHooks === "function" && !!apex.message.TYPE, "apex.message.setThemeHooks / TYPE");
+            need(typeof apex.util.showSpinner === "function", "apex.util.showSpinner");
+            need(!!window.offlineCapture, "offline.js: offlineCapture für die Dynamic Action auf Seite 0");
             need(!!document.querySelector(".t-NavigationBar"), "Universal Theme .t-NavigationBar");
             need(!!document.getElementById("offline-page"), "Seitenkennung #offline-page (Region auf Seite 0)");
             await navigator.serviceWorker.ready;
@@ -462,7 +460,8 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await putBack({ ...savedDraft, status: "sendet" });         // App mitten im Senden geschlossen
         await page.reload();
         await page.waitForSelector(".offline-status");
-        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 90000, "erneutes Senden");
+        const noDrafts = async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t) && await drafts(page) === ""; };
+        await waitFor(noDrafts, 90000, "erneutes Senden");
         await putBack({ ...savedDraft, id: savedDraft.id + "-alt", status: "unklar", resend: false });   // Stand vor 1.8.0
         await page.reload();
         await page.waitForSelector(".offline-status");
@@ -471,7 +470,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await Promise.all([page.waitForURL(/foto\?/), page.locator(".offline-panel li", { hasText: "unklar" }).locator("[data-act=open]").click()]);
         await waitFor(async () => (await page.inputValue("#P4_FOTO")).startsWith("data:image/jpeg"), 10000, "Entwurf eingesetzt");
         await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
-        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 90000, "unklar-Entwurf übertragen");
+        await waitFor(noDrafts, 90000, "unklar-Entwurf übertragen");
         const again = (await serverValues(desk, RUN)).fotos.filter(f => f.text.endsWith("Typenschild " + RUN));
         check(again.length === 1, "nach zweimal erneutem Senden weiterhin genau ein Foto „Typenschild“");
 
@@ -510,8 +509,73 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await field.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
 
+        console.log("13b. Online speichern über den Rahmen: Ablehnung, wieder geöffnete Neuanlage, Abbruch");
+        await gotoList(page);
+        await openOrder(page, "A-1003");
+        await page.evaluate(() => apex.item("P2_TITEL").setValue("x".repeat(201)));   // nur der Server prüft die Länge eines gesetzten Werts
+        await page.getByRole("button", { name: "Speichern" }).click();
+        await waitFor(async () => await page.locator("[role=alert]", { hasText: "Titel" }).count() > 0, 30000, "Ablehnung");
+        check(/auftrag\?/.test(page.url()) && !/offen/.test(await pill(page)) && (await page.inputValue("#P2_TITEL")).length === 201,
+            "online abgelehnt: Meldung „" + (await page.locator("[role=alert]", { hasText: "Titel" }).first().innerText()).replace(/\s+/g, " ").trim()
+            + "“, Eingaben bleiben, kein Entwurf");
+
+        await field.setOffline(true);                                // offline anlegen, offline wieder öffnen, online speichern
+        await gotoList(page);
+        await page.waitForSelector(".offline-status");
+        await Promise.all([page.waitForURL(/auftrag/), page.getByRole("link", { name: "Neuer Auftrag" }).click()]);
+        await page.waitForSelector("#P2_NR");
+        await page.fill("#P2_NR", RUN + "C");
+        await page.fill("#P2_TITEL", "Wieder geöffnet " + RUN);
+        await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Anlegen" }).click()]);
+        await waitFor(async () => /1 offen/.test(await pill(page)), 10000, "1 offen");
+        await page.locator(".offline-status").click();
+        await Promise.all([page.waitForURL(/auftrag/), page.locator(".offline-panel li", { hasText: RUN + "C" }).locator("[data-act=open]").click()]);
+        await waitFor(async () => await page.inputValue("#P2_NR") === RUN + "C", 10000, "Entwurf eingesetzt");
+        await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        await waitFor(async () => /^Online/.test(await pill(page)), 15000, "online");
+        await Promise.all([page.waitForURL(/auftraege/, { timeout: 60000 }), page.getByRole("button", { name: "Anlegen" }).click()]);
+        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 60000, "keine Entwürfe");
+        await page.waitForTimeout(3000);                             // eine zweite Übertragung hätte jetzt stattgefunden
+        await gotoList(desk);
+        check(await desk.locator("td", { hasText: RUN + "C" }).count() === 1, "wieder geöffnete Neuanlage online gespeichert: genau ein Auftrag " + RUN + "C");
+
+        await gotoList(page);
+        await openOrder(page, "A-1005");
+        await page.fill("#P2_BEFUND", "Abbruch " + RUN);
+        // Verbindung weg, sobald der unsichtbare Rahmen absendet (Playwright sieht Anfragen hinter dem Service Worker nicht)
+        let postCut = false;
+        await page.exposeFunction("oeCut", async () => { if (!postCut) { postCut = true; await field.setOffline(true); } }).catch(() => {});
+        await page.evaluate(() => {
+            const timer = setInterval(() => {
+                const f = document.querySelector("iframe[name=offline-sync]");
+                const w = f && f.contentWindow;
+                if (!w || !w.XMLHttpRequest || w.__oeCut) { return; }
+                w.__oeCut = true;
+                const open = w.XMLHttpRequest.prototype.open, send = w.XMLHttpRequest.prototype.send;
+                w.XMLHttpRequest.prototype.open = function (method, ...rest) { this.__oePost = /post/i.test(method); return open.call(this, method, ...rest); };
+                // erst offline, dann absenden: die Anfrage erreicht den Server nicht (ein LAN ist schneller als setOffline)
+                w.XMLHttpRequest.prototype.send = function (body) {
+                    if (!this.__oePost) { return send.call(this, body); }
+                    clearInterval(timer);
+                    window.oeCut().then(() => send.call(this, body));
+                };
+                const fetch_ = w.fetch;
+                w.fetch = (input, init) => (init && /post/i.test(init.method || "")
+                    ? (clearInterval(timer), window.oeCut().then(() => fetch_.call(w, input, init))) : fetch_.call(w, input, init));
+            }, 20);
+        });
+        await Promise.all([page.waitForURL(/auftraege/, { timeout: 60000 }), page.getByRole("button", { name: "Speichern" }).click()]);
+        await waitFor(async () => /1 offen/.test(await pill(page)), 15000, "1 offen");
+        check(postCut && /1 offen/.test(await pill(page)), "Verbindung weg während des Online-Speicherns: als Entwurf gesichert (" + await drafts(page) + ")");
+        await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 60000, "nachgesendet");
+        const a5 = await serverValues(desk, "A-1005");
+        check(a5.befund === "Abbruch " + RUN, "nach dem Abbruch nachgesendet: Befund auf dem Server");
+
         console.log("14. Aufräumen: Testaufträge samt Fotos im Büro löschen");
-        for (const nr of [RUN + "B", RUN]) {
+        for (const nr of [RUN + "C", RUN + "B", RUN]) {
             await gotoList(desk);
             await openOrder(desk, nr);
             await desk.getByRole("button", { name: "Löschen", exact: true }).click();

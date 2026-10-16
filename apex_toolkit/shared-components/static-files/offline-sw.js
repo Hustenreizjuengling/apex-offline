@@ -16,7 +16,9 @@ const PAGES = "offline-pages:" + SCOPE.pathname;                          // gle
 const FILES = "offline-files:" + SCOPE.pathname;                          // gleicher Name in offline.js
 const CONFIG = SCOPE.href + "offline-config";                            // Pfade der statischen Dateien (schreibt offline.js)
 const PROBE = SCOPE.href + "offline-probe";                              // Selbstprüfung: beantwortet nur dieser Hook
-const VOLATILE = ["session", "cs", "clear", "success_msg", "tz", "debug"]; // gleiche Liste in offline.js
+// Dokumentierte Parameter der Friendly URLs, die nichts am Inhalt ändern; gleiche Liste in offline.js
+const VOLATILE = ["session", "cs", "dialogcs", "clear", "debug", "trace", "timezone"];
+const PAGE_LIMIT = 500;   // gespeicherte Seiten höchstens; die am längsten nicht gespeicherten fallen zuerst heraus
 const MARK = 'id="offline-page"';                                        // Seitenkennung (Region auf Seite 0)
 const TIMEOUT = 4000;                                                    // danach die gespeicherte Fassung
 const PATIENT = 30000;     // Übertragungsseite und Dialoge (iframe) warten länger auf einen langsamen Server
@@ -32,7 +34,7 @@ const HTML = { "Content-Type": "text/html; charset=utf-8" };
 
 function pageKey(href) {                          // eine Seite = Pfad + fachliche Parameter
     const url = new URL(href);
-    VOLATILE.forEach(p => url.searchParams.delete(p));
+    [...new Set(url.searchParams.keys())].filter(k => VOLATILE.includes(k.toLowerCase())).forEach(k => url.searchParams.delete(k));
     url.searchParams.sort();
     url.hash = "";
     return url.href;
@@ -54,8 +56,15 @@ async function remember(key, response) {
     if (!response.ok || response.type !== "basic") { return; }
     const html = await response.text();          // nur angemeldete Seiten der App: keine Anmelde-, Fehler- oder Zeitzonenseite
     if (!html.includes(MARK)) { return; }
-    await (await caches.open(PAGES)).put(key, new Response(html, { headers: { ...HTML, "x-offline-stored": String(Date.now()) } }));
+    const cache = await caches.open(PAGES);
+    await cache.put(key, new Response(html, { headers: { ...HTML, "x-offline-stored": String(Date.now()) } }));
+    // Obergrenze: put hängt hinten an (Cache API), die ersten Einträge sind also die ältesten
+    if (++puts % 25 === 0) {
+        const keys = await cache.keys();
+        await Promise.all(keys.slice(0, Math.max(0, keys.length - PAGE_LIMIT)).map(k => cache.delete(k)));
+    }
 }
+let puts = 0;                                     // gespeicherte Seiten seit dem Start des Service Workers
 
 async function fromCache(key) {
     const hit = await caches.match(key, { cacheName: PAGES });
