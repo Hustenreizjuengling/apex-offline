@@ -43,12 +43,22 @@ jobs:
           OE_USER: TECHNIKER
           OE_PASSWORD: ${{ env.CI_PW }}
         run: npm run test:mass
+      - name: Diagnose
+        if: failure()
+        env:
+          OE_URL: http://localhost:8080/ords/r/hr_dev/erfassung
+          OE_USER: TECHNIKER
+          OE_PASSWORD: ${{ env.CI_PW }}
+        run: |
+          node tests/ci/diag.js || true
+          echo "== Fehler im Aktivitätsprotokoll der Instanz"
+          printf "set linesize 250 pagesize 100\nselect to_char(view_timestamp, 'HH24:MI:SS') zeit, page_id seite, substr(error_message, 1, 400) fehler from apex_workspace_activity_log where error_message is not null order by view_timestamp desc fetch first 15 rows only;\nexit\n" \
+            | /home/runner/oracle-ci/sqlcl/bin/sql -S -L "HR/${CI_PW}@//localhost:1521/FREEPDB1" || true
+          mkdir -p tests/.state/ci-logs && cp -r /home/runner/oracle-ci/logs/. tests/.state/ci-logs/ || true
       - name: Protokolle sichern
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: protokolle
-          path: |
-            tests/.state
-            ~/oracle-ci/logs
+          path: tests/.state
           if-no-files-found: ignore
