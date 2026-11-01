@@ -12,7 +12,7 @@ page 0 (
         name: Offline-Kennung
         type: staticContent
         source {
-            htmlCode: <span id="offline-page" hidden data-user="&APP_USER."></span>
+            htmlCode: <span id="offline-page" hidden data-user="&APP_USER." data-retry="gerade bearbeitet"></span>
         }
         layout {
             sequence: 1000

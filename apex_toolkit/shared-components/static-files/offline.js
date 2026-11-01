@@ -99,6 +99,27 @@
     window.addEventListener("pagehide", () => { leaving = true; });
     window.addEventListener("pageshow", () => { leaving = false; });
     const STOCK_LIMIT = 300;                      // Offline-Vorrat: Seiten je Sitzung
+    // Vorübergehende Serverfehler - Sperre, Datenbank oder ORDS nicht bereit, Paket gerade neu übersetzt - werden nach
+    // 1, 5 und 15 Minuten automatisch erneut versucht; danach bleibt der Entwurf "fehler" für den Anwender. Eigene
+    // Texte der App stehen als regulärer Ausdruck in data-retry an der Seitenkennung (Beispiel-App: "gerade bearbeitet").
+    const RETRY_AFTER = [60000, 300000, 900000];
+    const TRANSIENT = /\bORA-(00018|00020|00028|00054|00060|01033|01034|01089|01092|02049|03113|03114|03135|04061|04065|04068|12154|12170|12514|12528|12537|12541|12545|30006)\b|Service Unavailable|Bad Gateway|Gateway Time-?out/i;
+    let appRetry;                                 // erst beim ersten Bedarf lesen: beim Laden dieser Datei gibt es die Kennung noch nicht
+    const appPattern = () => {
+        if (appRetry !== undefined) { return appRetry; }
+        const mark = document.getElementById("offline-page");
+        try { appRetry = mark && mark.dataset.retry ? new RegExp(mark.dataset.retry, "i") : null; } catch (e) { appRetry = null; }
+        return appRetry;
+    };
+    const transient = messages => TRANSIENT.test(messages.join(" ")) || (!!appPattern() && appPattern().test(messages.join(" ")));
+    // Abgelehnt: dauerhaft (Validierung) bleibt "fehler", bis der Anwender öffnet; vorübergehend wird erneut versucht
+    const rejected = (d, r) => {
+        const tries = r.transient ? (d.tries || 0) + 1 : 0;
+        return { status: "fehler", info: r.info, resend: r.resend, tries, retryAt: r.transient && tries <= RETRY_AFTER.length ? Date.now() + RETRY_AFTER[tries - 1] : 0 };
+    };
+    const due = d => d.status === "wartet" || (d.status === "fehler" && !!d.retryAt && d.retryAt <= Date.now());   // jetzt zu senden
+    const retrying = d => d.status === "fehler" && !!d.retryAt && d.retryAt > Date.now();                      // wartet auf den nächsten Versuch
+    let storageLow = false;                       // Browser-Speicher über 90 % belegt (navigator.storage.estimate)
     const STOCK_LAST = "offline-stock-last:" + env.APP_ID;   // Ergebnis des letzten Vorrats, auch für gespeicherte Seiten
     let stockState = null;                        // { at: zuletzt vollständig, complete, limit }
     try { stockState = JSON.parse(localStorage.getItem(STOCK_LAST) || "null"); } catch (e) { stockState = null; }
@@ -331,12 +352,16 @@
         } catch (e) {
             capturing = false;
             draft = previous;
-            if (online && !IS_COPY && !bypassed) {   // Speicher des Browsers nicht nutzbar: APEX sendet selbst
+            if (online && !IS_COPY && !bypassed) {   // Speicher des Browsers nicht nutzbar oder voll: APEX sendet selbst
                 bypass = bypassed = true;
                 apex.page.submit({ request });
                 return;
             }
-            apex.message.alert("Nicht lokal gespeichert (" + (e && e.name) + "). Bitte die Seite offen lassen.");
+            // Offline: die Eingaben stehen nur noch im Formular - deutlich sagen, was zu tun ist
+            apex.message.alert(e && e.name === "QuotaExceededError"
+                ? "Der Speicher des Browsers ist voll – die offenen Erfassungen mit ihren Fotos belegen ihn. Bitte diese Seite offen lassen, "
+                    + "mit Verbindung die offenen Erfassungen übertragen lassen und dann erneut speichern."
+                : "Nicht lokal gespeichert (" + (e && e.name) + "). Bitte die Seite offen lassen.");
             return;
         }
         if (abortCapture) { abortCapture = capturing = false; draft = previous; await deleteDraft(d.id); return; }
@@ -353,8 +378,8 @@
             result = await replay(d, async r => {
                 // Nur eine echte Ablehnung (Meldungen der Seite) darf den neuen Entwurf löschen. Kam statt der Seite etwas
                 // anderes (Proxy, Hotspot, Fehlerseite), bleibt er unten als "fehler" erhalten - sonst wären die Eingaben weg.
-                if (r.status === "ok" || (r.status === "fehler" && r.messages && !existed)) { await settle(d); }
-                else if (r.status === "fehler" && r.messages) { await settle(d, { status: "fehler", info: r.info, resend: r.resend }); }
+                if (r.status === "ok" || (r.status === "fehler" && r.messages && !existed && !r.transient)) { await settle(d); }
+                else if (r.status === "fehler" && r.messages) { await settle(d, rejected(d, r)); }
                 else if (r.status === "konflikt") { await settle(d, { status: "konflikt", info: r.info }); }
                 else if (r.status !== "neu") { await settle(d, { status: r.status, info: r.info, resend: r.resend }); }
                 return r;
@@ -365,7 +390,7 @@
             refetch(d, result, true);
             apex.page.cancelWarnOnUnsavedChanges();
             if (result.url) { location.href = result.url; } else { leave("Gespeichert."); }   // die Seite, die der Rahmen danach zeigte
-        } else if (result.status === "fehler" && result.messages) {   // vom Server abgelehnt: Meldungen hier, Eingaben bleiben
+        } else if (result.status === "fehler" && result.messages && !result.transient) {   // vom Server abgelehnt: Meldungen hier, Eingaben bleiben
             if (!existed) { draft = null; }
             apex.message.clearErrors();
             apex.message.showErrors((result.messages || [result.info]).map(message => ({ type: "error", location: "page", message })));
@@ -377,7 +402,8 @@
         } else {                                  // wartet, unklar, fehler beim Setzen der Werte, neu
             if (result.info === "Anmeldung erforderlich") { needLogin = true; }
             apex.page.cancelWarnOnUnsavedChanges();
-            leave(result.status === "fehler" ? "Gespeichert – bitte in der Liste der Entwürfe prüfen: " + result.info
+            leave(result.status === "fehler" ? (result.transient ? "Gespeichert – der Server war kurz nicht bereit, wird automatisch erneut übertragen: "
+                    : "Gespeichert – bitte in der Liste der Entwürfe prüfen: ") + result.info
                 : needLogin ? "Gespeichert – wird nach der Anmeldung übertragen." : "Offline gespeichert – wird automatisch übertragen.");
         }
         refresh();
@@ -442,11 +468,12 @@
                     d.status = unsure(d);         // Ausgang unbekannt
                     await settle(d, { status: d.status });
                 }
-                if (d.status !== "wartet" || (draft && d.id === draft.id)) { continue; }
+                if (!due(d) || (draft && d.id === draft.id)) { continue; }
                 transmitting = true;
                 refresh();
                 const result = await replay(d, async r => {   // abschließen, solange die Sende-Sperre noch gehalten wird
                     if (r.status === "ok") { await settle(d); }
+                    else if (r.status === "fehler" && r.messages) { await settle(d, rejected(d, r)); }
                     else if (r.status !== "neu") { await settle(d, { status: r.status, info: r.info, resend: r.resend }); }
                     return r;
                 });
@@ -580,7 +607,7 @@
             messages.push(...errorTexts(el$));
             clearTimeout(decide);
             decide = setTimeout(async () => {
-                if (await check()) { finish("fehler", messages.join(" "), { messages: [...messages] }); }
+                if (await check()) { finish("fehler", messages.join(" "), { messages: [...messages], transient: transient(messages) }); }
                 else { finish(unsure(d), "Server nicht erreichbar"); }
             }, 300);
         } });
@@ -651,9 +678,20 @@
 
     /* ---------- Anzeige: Verbindungsstatus, offene Entwürfe, Markierung in Listen ---------- */
 
+    // Browser-Speicher über 90 % belegt: warnen, bevor ein Foto nicht mehr gespeichert werden kann. Eigener Takt (Start, alle
+    // 30 s, beim Öffnen der Liste), damit refresh() nicht auf die Schätzung warten muss.
+    async function checkStorage() {
+        if (!navigator.storage || !navigator.storage.estimate) { return; }
+        const low = await navigator.storage.estimate().then(e => !!e.quota && e.usage / e.quota > 0.9, () => false);
+        if (low !== storageLow) { storageLow = low; refresh(); }
+    }
+
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = "offline-status";
+    pill.textContent = online ? "Online" : "Offline";   // bis zur ersten Aktualisierung: nie eine Schaltfläche ohne Namen
+    pill.setAttribute("aria-haspopup", "dialog");   // öffnet die Liste der Entwürfe
+    pill.setAttribute("aria-live", "polite");       // Zustandswechsel (Offline, sendet, offen) werden vorgelesen
     pill.addEventListener("click", openPanel);
 
     async function refresh() {
@@ -664,8 +702,9 @@
         if (IS_COPY) { parts.push(COPY_AT ? "Stand " + when(COPY_AT) : "gespeicherte Seite"); }
         if (list.length) { parts.push(list.length + " offen"); }
         if (online && transmitting) { parts.push("sendet"); } else if (online && stocking) { parts.push("lädt"); }
-        const warn = (stockIncomplete() && !stocking) || (online && needLogin) || !!disabled || !!swBroken;
+        const warn = (stockIncomplete() && !stocking) || (online && needLogin) || !!disabled || !!swBroken || storageLow;
         if (stockIncomplete() && !stocking) { parts.push(stockState.limit ? "Vorrat begrenzt" : "Vorrat unvollständig"); }
+        if (storageLow) { parts.push("Speicher knapp"); }
         if (online && needLogin) { parts.push("Anmeldung nötig"); }
         if (disabled) { parts.push("Offline gestört"); }
         pill.classList.toggle("is-offline", !online);
@@ -685,9 +724,13 @@
         const list = await allDrafts();
         const esc = apex.util.escapeHTML;
         const stored = (await (await caches.open(CACHE)).keys()).filter(r => r.url.startsWith(location.origin + BASE)).length;
+        const estimate = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate().catch(() => null) : null;
+        storageLow = !!estimate && !!estimate.quota && estimate.usage / estimate.quota > 0.9;
+        const mb = bytes => (bytes >= 1e9 ? (bytes / 1e9).toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " GB" : Math.round(bytes / 1e6) + " MB");
         const dialog = document.createElement("dialog");
         dialog.className = "offline-panel";
-        dialog.innerHTML = "<h2>Offline erfasst</h2>"
+        dialog.setAttribute("aria-labelledby", "offline-panel-title");
+        dialog.innerHTML = '<h2 id="offline-panel-title">Offline erfasst</h2>'
             + (swBroken ? `<p class="offline-login">Seitenspeicher gestört: ${esc(swBroken)}. Neue Seiten werden nicht für offline gespeichert.</p>` : "")
             + (env.APEX_BASE_VERSION && !TESTED_APEX.includes(env.APEX_BASE_VERSION)
                 ? `<p class="offline-version">APEX ${esc(env.APEX_BASE_VERSION)}, zuletzt geprüft mit ${TESTED_APEX[TESTED_APEX.length - 1]}: Release Notes gegen den Vertrag im README halten.</p>` : "")
@@ -698,6 +741,8 @@
                 : stockState.limit ? " – Grenze von " + STOCK_LIMIT + " Seiten erreicht" : " – Vorrat unvollständig, wird fortgesetzt")
             + (!IS_COPY && online && !stocking ? ' <button type="button" class="t-Button t-Button--small" data-act="restock">Vorrat neu laden</button>' : "")
             + "</p>"
+            + (estimate && estimate.quota ? `<p class="offline-storage${storageLow ? " offline-login" : ""}">Speicher des Browsers: ${mb(estimate.usage || 0)} von ${mb(estimate.quota)} belegt`
+                + (storageLow ? " – knapp: offene Erfassungen übertragen lassen, dann wird Platz frei." : "") + "</p>" : "")
             + (disabled ? `<p class="offline-login">Offline-Erfassung abgeschaltet: ${esc(disabled)}. APEX speichert normal; `
                 + "offene Entwürfe bleiben auf dem Gerät und werden nicht gesendet.</p>" : "")
             + (online && needLogin ? '<p class="offline-login">Die Sitzung ist abgelaufen. '
@@ -705,7 +750,8 @@
             + (list.length ? "<ul>" + list.map(d =>
                 `<li data-id="${esc(d.id)}"><img class="offline-thumb" alt="" hidden><strong>${esc(d.title)}</strong> <small>${new Date(d.ts).toLocaleString()}</small>`
                 + `<div class="is-${esc(d.status)}">${esc(d.status)}${d.info ? ": " + esc(d.info) : ""}`
-                + (d.status === "unklar" ? " - bitte prüfen, ob er schon angelegt ist" : "") + "</div>"
+                + (d.status === "unklar" ? " - bitte prüfen, ob er schon angelegt ist" : "")
+                + (retrying(d) ? " – wird " + when(d.retryAt) + " automatisch erneut versucht" : "") + "</div>"
                 + '<button type="button" class="t-Button t-Button--small" data-act="open">Öffnen</button> '
                 + '<button type="button" class="t-Button t-Button--small t-Button--danger" data-act="drop">Verwerfen</button></li>').join("") + "</ul>"
               : "<p>Keine offenen Erfassungen.</p>")
@@ -737,7 +783,7 @@
                 await Promise.all(list.filter(x => x.status === "fehler" || x.status === "konflikt")
                     .map(async x => {                 // list ist der Index: zum Umstufen den ganzen Entwurf lesen
                         const full = await fullDraft(x.id);
-                        if (full) { await putDraft({ ...full, status: "wartet", info: "" }); }
+                        if (full) { await putDraft({ ...full, status: "wartet", info: "", tries: 0, retryAt: 0 }); }
                     }));
                 needLogin = false;
                 if (await check()) { sync(); } else { say("Server nicht erreichbar."); }
@@ -765,6 +811,8 @@
         input.style.display = "none";
         input.after(box);
         const canvas = box.firstChild, ctx = canvas.getContext("2d");
+        canvas.setAttribute("role", "img");
+        canvas.setAttribute("aria-label", labels([input.id]) + " – Unterschriftenfeld, mit Finger oder Stift zeichnen");
         let last = null, own = false, drawn = false;   // drawn: seit dem letzten Löschen wurde ein Strich gezogen
         const blank = () => { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); drawn = false; };
         const show = value => {
@@ -825,18 +873,19 @@
         if (!input || !input.id) { return; }
         const box = document.createElement("div");
         box.className = "offline-photo-box";
-        box.innerHTML = '<img alt="Foto" hidden>'
-            + '<label class="t-Button t-Button--iconLeft"><span class="t-Icon t-Icon--left fa fa-camera" aria-hidden="true"></span>'
-            + '<span class="t-Button-label">Foto aufnehmen oder auswählen</span><input type="file" accept="image/*" hidden></label>';
+        box.innerHTML = '<img alt="" hidden>'
+            + '<button type="button" class="t-Button t-Button--iconLeft"><span class="t-Icon t-Icon--left fa fa-camera" aria-hidden="true"></span>'
+            + '<span class="t-Button-label">Foto aufnehmen oder auswählen</span></button><input type="file" accept="image/*" hidden>';
         input.style.display = "none";
         input.after(box);
-        const img = box.querySelector("img"), file = box.querySelector("input");
+        const img = box.querySelector("img"), file = box.querySelector("input[type=file]"), pick = box.querySelector("button");
+        img.alt = labels([input.id]);
+        pick.addEventListener("click", () => { pickedAt = Date.now(); file.click(); });   // Schaltfläche: per Tastatur erreichbar
         let own = false;
         const show = value => {
             img.hidden = !/^data:image\//.test(value || "");
             if (!img.hidden) { img.src = value; }
         };
-        file.addEventListener("click", () => { pickedAt = Date.now(); });   // Kamera offen: nicht neu laden
         file.addEventListener("change", async () => {   // das Datei-Feld hat keinen Namen: APEX überträgt es nie selbst
             pickedAt = Date.now();
             const chosen = file.files[0];
@@ -875,6 +924,7 @@
         button.type = "button";
         button.className = "t-Button t-Button--icon offline-scan-button";
         button.title = "Scannen";
+        button.setAttribute("aria-label", labels([input.id]) + " scannen: Barcode oder QR-Code mit der Kamera");
         button.innerHTML = '<span class="fa fa-barcode" aria-hidden="true"></span>';
         input.after(button);
         button.addEventListener("click", () => (pickedAt = Date.now(), scan()).then(
@@ -896,9 +946,12 @@
         const reader = await detector();
         const overlay = document.createElement("div");
         overlay.className = "offline-scan-overlay";
-        overlay.innerHTML = '<video playsinline muted></video><button type="button" class="t-Button">Abbrechen</button>';
+        overlay.setAttribute("role", "dialog");
+        overlay.setAttribute("aria-label", "Scanner: Barcode oder QR-Code vor die Kamera halten");
+        overlay.innerHTML = '<video playsinline muted aria-hidden="true"></video><button type="button" class="t-Button">Abbrechen</button>';
         document.body.append(overlay);
         const video = overlay.firstChild;
+        overlay.lastChild.focus();
         let stream = null;
         try {
             stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
@@ -1031,6 +1084,7 @@
                     const img = document.createElement("img");
                     img.alt = d.title;
                     img.dataset.draft = d.id;     // Klick zeigt das ganze Foto aus dem Entwurf (3f)
+                    zoomable(img);
                     if (d.thumb) { img.src = d.thumb; } else { thumbOf(d).then(src => { if (src) { img.src = src; } }, () => {}); }
                     li.append(img);
                 }
@@ -1038,7 +1092,7 @@
                 title.textContent = d.title;
                 const status = document.createElement("small");
                 status.className = "is-" + d.status;
-                status.textContent = STATES[d.status] || d.status;
+                status.textContent = retrying(d) ? "wird erneut versucht" : STATES[d.status] || d.status;
                 li.append(title, status);
                 return li;
             }));
@@ -1047,6 +1101,19 @@
 
     /* ---------- 3f. Bilder groß ansehen: Region mit der CSS-Klasse offline-lightbox (und offene Fotos) ---------- */
 
+    function zoomable(img) {                      // Bild per Tastatur erreichbar: Enter oder Leertaste zeigt es groß
+        if (img.hidden || img.dataset.offlineZoom) { return; }
+        img.dataset.offlineZoom = "1";
+        img.tabIndex = 0;
+        img.setAttribute("role", "button");
+        img.setAttribute("aria-label", (img.alt || "Bild") + " – groß anzeigen");
+    }
+    document.addEventListener("keydown", event => {
+        if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLImageElement && event.target.dataset.offlineZoom) {
+            event.preventDefault();
+            event.target.click();
+        }
+    });
     document.addEventListener("click", async event => {
         const img = event.target.closest && event.target.closest(".offline-lightbox img, .offline-drafts-list img");
         if (!img || img.hidden || !img.naturalWidth) { return; }
@@ -1059,6 +1126,7 @@
         }
         const viewer = document.createElement("dialog");
         viewer.className = "offline-viewer";
+        viewer.setAttribute("aria-label", (img.alt || "Bild") + " – Großansicht");
         const big = document.createElement("img");
         big.src = src;
         big.alt = img.alt;
@@ -1121,6 +1189,7 @@
         document.querySelectorAll(".offline-photo").forEach(photoField);
         document.querySelectorAll(".offline-scan").forEach(scanButton);
         document.querySelectorAll("img[src]").forEach(img => { if (img.complete && !img.naturalWidth) { unavailable(img); } });
+        document.querySelectorAll(".offline-lightbox img").forEach(zoomable);
         if (isForm()) {
             snapshot = readItems();
             await restore();
@@ -1153,6 +1222,7 @@
         if (document.body.classList.contains("online-only")) {   // Hinweis, der ohne Verbindung die Seite ersetzt
             const notice = document.createElement("div");
             notice.className = "online-only-notice";
+            notice.setAttribute("role", "status");
             notice.innerHTML = "<h2>Nur online verfügbar</h2><p>Diese Seite braucht eine Verbindung zum Server. "
                 + "Die offline verfügbaren Seiten erreichen Sie mit „Zurück“.</p>"
                 + '<button type="button" class="t-Button" data-act="back">Zurück</button> '
@@ -1171,6 +1241,7 @@
                 .then(ok => { if (!ok) { swBroken = "Service-Worker-Hook antwortet nicht"; refresh(); } });
         }
         await refresh();
+        checkStorage();
         if (await check()) {
             if (IS_COPY && (document.body.classList.contains("online-only") || (!isForm() && canReload()))) {
                 const retry = "offline-retry:" + pageKey(location.href);
@@ -1201,8 +1272,10 @@
         // Zurück aus dem Back/Forward-Cache (z. B. nach dem Speichern): apexreadyend läuft dann nicht
         window.addEventListener("pageshow", event => { if (event.persisted) { capturing = false; flash(); refresh(); again(); } });
         setInterval(async () => {
-            if (document.visibilityState !== "visible" || !(await check()) || syncing || stocking || needLogin || Date.now() < nextTry) { return; }
-            const waiting = (await allDrafts()).some(d => d.status === "wartet");
+            if (document.visibilityState !== "visible") { return; }
+            checkStorage();
+            if (!(await check()) || syncing || stocking || needLogin || Date.now() < nextTry) { return; }
+            const waiting = (await allDrafts()).some(due);
             if (waiting || (stockIncomplete() && !stockState.limit && !IS_COPY)) { nextTry = Date.now() + 120000; resume(); }   // höchstens alle 2 Minuten
         }, 30000);
     }

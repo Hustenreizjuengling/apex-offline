@@ -1,0 +1,54 @@
+# Nächtlicher Browsertest gegen eine eigene Instanz im Runner (Oracle Database Free, APEX, ORDS - tests/ci/instance.sh),
+# dazu der Massentest. Dauert etwa 40 Minuten; von Hand über "Run workflow" startbar. Der Lint läuft bei jedem Push (lint.yml).
+name: browsertest
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  browsertest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Kennwort für die Testinstanz (nur dieser Lauf)
+        run: |
+          PW="Ci$(openssl rand -hex 10)x"
+          echo "::add-mask::$PW"
+          echo "CI_PW=$PW" >> "$GITHUB_ENV"
+      - name: Testinstanz aufbauen
+        run: tests/ci/instance.sh
+      - name: Browsertest
+        env:
+          OE_URL: http://localhost:8080/ords/r/hr_dev/erfassung
+          OE_USER: TECHNIKER
+          OE_PASSWORD: ${{ env.CI_PW }}
+          OE_SQLCL: /home/runner/oracle-ci/sqlcl/bin/sql -S -L HR/${{ env.CI_PW }}@//localhost:1521/FREEPDB1
+        run: npm test
+      - name: Massentest
+        if: success() || failure()
+        env:
+          OE_URL: http://localhost:8080/ords/r/hr_dev/erfassung
+          OE_USER: TECHNIKER
+          OE_PASSWORD: ${{ env.CI_PW }}
+        run: npm run test:mass
+      - name: Protokolle sichern
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protokolle
+          path: |
+            tests/.state
+            ~/oracle-ci/logs
+          if-no-files-found: ignore

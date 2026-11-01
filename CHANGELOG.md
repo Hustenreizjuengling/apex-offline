@@ -3,6 +3,36 @@
 Versionsnummer wie im README „Release und Update“: Fehlerkorrektur erhöht die dritte Stelle (1.14.1), neues
 Verhalten die zweite (1.15.0). Die Version steht in `apex_toolkit/application.apx` und in der Fußzeile der App.
 
+## 1.16.0 – 2026-11-02
+
+Neues Verhalten: vorübergehende Serverfehler werden automatisch wiederholt; in eigenen Apps optional `data-retry` an
+der Seitenkennung (README, Schritt 6) und die Foto-Schaltfläche ist jetzt ein `<button>` (eigenes CSS prüfen).
+
+- **Vorübergehende Serverfehler werden wiederholt** (Befund B9): Lehnt der Server mit einem Fehler ab, der nach
+  kurzer Zeit von selbst verschwindet – Zeile gesperrt (ORA-00054, ORA-30006), Verbindung zur Datenbank
+  (ORA-03113, ORA-12541 …), Paket gerade neu übersetzt (ORA-04068), ORDS nicht bereit („Service Unavailable“,
+  „Bad Gateway“) –, bleibt der Entwurf als *fehler* liegen und wird nach 1, 5 und 15 Minuten automatisch erneut
+  gesendet; die Liste der Entwürfe nennt den nächsten Versuch. Erst danach ist der Anwender dran. Eigene Texte der
+  App (z. B. „gerade bearbeitet“ aus `#SQLERRM_TEXT#`) stehen als regulärer Ausdruck in `data-retry` an der
+  Seitenkennung. Bisher galt jede Ablehnung als Validierungsfehler; beim Online-Speichern wurde ein neuer Entwurf
+  dabei gelöscht und der Anwender sah „Error: Service Unavailable“. Testschritte 13g (503) und 13h (Sperre, mit
+  `OE_SQLCL`).
+- **Speicher voll:** Scheitert das Speichern eines Entwurfs an `QuotaExceededError`, sagt der Hinweis jetzt, was
+  zu tun ist (Seite offen lassen, offene Erfassungen übertragen lassen, erneut speichern); die Liste der Entwürfe
+  zeigt den Speicherstand des Browsers, ab 90 % warnt die Anzeige „Speicher knapp“. Online speichert APEX wie
+  bisher selbst. Testschritt 13f.
+- **Barrierefreiheit:** Statusanzeige mit `aria-live` und `aria-haspopup`, Liste der Entwürfe und Großansicht
+  mit Namen, Unterschriftenfeld und Scan-Taste mit Beschreibung, Foto-Schaltfläche als echter `<button>` (per
+  Tastatur erreichbar), Vorschaubilder und Lightbox-Bilder per Tastatur (Enter, Escape). Der Browsertest prüft die
+  eigenen Bedienelemente mit axe-core (WCAG 2 A/AA).
+- **Beispiel-App, Foto-Paket:** Ab Oracle 23ai meldet `for update wait n` den Zeitablauf als ORA-00054 statt ORA-30006;
+  das Paket fing nur ORA-30006 und gab die rohe Oracle-Meldung weiter. Jetzt beide → „Der Auftrag wird gerade
+  bearbeitet“ (`sql/pck_oe_auftrag_foto_dml.sql` neu einspielen).
+- **Massentest** `npm run test:mass`: 30 Fotos und 5 Änderungen auf einmal übertragen, misst Dauer je Entwurf
+  (Seite laden / absenden) und Heap. Stand: 35 Entwürfe in 56 s, 1,6 s je Entwurf, Heap 190 MB.
+- **Nächtlicher Browsertest** als GitHub Action mit eigener Instanz (Oracle Free, APEX, ORDS im Runner).
+- Gemeinsame Testhilfen in `tests/lib.js`.
+
 ## 1.15.1 – 2026-11-01
 
 Fehlerkorrekturen zu 1.15.0 (Befunde eines zweiten Reviews).

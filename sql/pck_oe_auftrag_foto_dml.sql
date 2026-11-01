@@ -17,7 +17,9 @@ end pck_oe_auftrag_foto_dml;
 create or replace package body pck_oe_auftrag_foto_dml as
 
     e_gesperrt exception;
-    pragma exception_init(e_gesperrt, -30006);    -- Sperre nicht innerhalb von WAIT erhalten
+    pragma exception_init(e_gesperrt, -30006);    -- Sperre nicht innerhalb von WAIT erhalten (bis 21c)
+    e_belegt   exception;
+    pragma exception_init(e_belegt, -54);         -- dasselbe ab 23ai: ORA-00054 "resource busy" auch bei WAIT n
 
     procedure freigeben(p_lob in out nocopy clob) is
     begin
@@ -101,7 +103,7 @@ create or replace package body pck_oe_auftrag_foto_dml as
         exception
             when no_data_found then
                 raise_application_error(-20104, 'Den Auftrag gibt es nicht mehr.');
-            when e_gesperrt then
+            when e_gesperrt or e_belegt then
                 raise_application_error(-20105, 'Der Auftrag wird gerade bearbeitet. Bitte erneut speichern.');
         end;
         select min(id) into l_id

@@ -42,7 +42,6 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 
 /* Foto: Vorschau über der Taste */
 .offline-photo-box img { display: block; max-width: 100%; max-height: 240px; margin-bottom: 8px; border-radius: 4px; }
-.offline-photo-box label { cursor: pointer; }
 
 /* Offene Neuanlagen am Ort (Region mit offline-drafts), z. B. noch nicht übertragene Fotos am Auftrag */
 .offline-drafts-list { list-style: none; display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 12px; padding: 0; }
@@ -51,8 +50,9 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 .offline-drafts-list small { color: #a15c00; font-weight: 600; }
 .offline-drafts-list .is-fehler, .offline-drafts-list .is-konflikt, .offline-drafts-list .is-unklar { color: #b3261e; }
 
-/* Bilder groß ansehen (Region mit offline-lightbox) */
+/* Bilder groß ansehen (Region mit offline-lightbox); per Tastatur erreichbar, Fokus sichtbar */
 .offline-lightbox img, .offline-drafts-list img { cursor: zoom-in; }
+img[data-offline-zoom]:focus-visible { outline: 3px solid #1e7d3c; outline-offset: 2px; }
 .offline-viewer { max-width: 96vw; max-height: 96vh; padding: 8px; border: 0; border-radius: 8px; background: #111; color: #fff; text-align: center; }
 .offline-viewer::backdrop { background: rgba(0, 0, 0, .8); }
 .offline-viewer img { display: block; max-width: calc(96vw - 16px); max-height: calc(96vh - 96px); margin: 0 auto; }
@@ -86,6 +86,6 @@ html.offline-mode body.online-only > .online-only-notice { display: block; }
 
 /* Drucken: eigene Bedienelemente ausblenden (Kopfleiste und Menü blendet die Seite selbst aus, siehe Seite 3) */
 @media print {
-    .offline-status, .offline-signature-pad button, .offline-scan-button, .offline-photo-box label,
+    .offline-status, .offline-signature-pad button, .offline-scan-button, .offline-photo-box button,
     .online-only-notice { display: none !important; }
 }

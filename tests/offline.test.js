@@ -9,103 +9,30 @@
  */
 const { chromium } = require("playwright");
 
-const URL_ = (process.env.OE_URL || "").replace(/\/$/, "");
-const USER = process.env.OE_USER, PASSWORD = process.env.OE_PASSWORD;
-if (!URL_ || !USER || !PASSWORD) { console.error("OE_URL, OE_USER und OE_PASSWORD setzen."); process.exit(2); }
+const { URL_, state, check, login, fillLogin, settled, noneOpen, pill, sessionOf, gotoList, openOrder, sign, drafts, putRaw, IS_COPY_PAGE,
+    cachedOf, waitFor, serverValues, sweep } = require("./lib");
 
 const RUN = "T" + Date.now().toString(36);                 // Kennung dieses Laufs in den Testdaten
 const OFFICE = "Büro <b>" + RUN + "</b>";                     // Büro-Wert mit HTML: muss überall als Text erscheinen
-let failed = 0;
-let loginPill = 0;                                                // Anmeldeseiten mit Statusanzeige (soll 0 sein)
-function check(ok, text) { console.log((ok ? "  [OK]   " : "  [FEHLER] ") + text); if (!ok) { failed++; } }
-
-async function login(page) {
-    await page.goto(URL_ + "/auftraege");
-    if (await page.locator("#P9999_USERNAME").count()) {
-        await page.waitForLoadState("load");
-        await page.waitForTimeout(500);                             // offline.js fügt die Anzeige nach dem Laden ein
-        if (await page.locator(".offline-status").count()) { loginPill++; }   // Anmeldeseite: keine Statusanzeige
-        await fillLogin(page);
-    }
-    await page.waitForSelector(".offline-status");
-}
-async function fillLogin(page) {                    // APEX-Anmeldeseite; danach zurück zur aufgerufenen Seite
-    await page.waitForSelector("#P9999_USERNAME");
-    await page.fill("#P9999_USERNAME", USER);
-    await page.fill("#P9999_PASSWORD", PASSWORD);
-    await Promise.all([page.waitForURL(url => !/\/login/.test(String(url))), page.getByRole("button", { name: "Anmelden" }).click()]);
-    await page.waitForSelector(".offline-status");
-}
-const settled = text => !/sendet|lädt/.test(text);   // Übertragung und Vorrat sind durch
-
-const pill = page => page.locator(".offline-status").innerText();
-// Ohne ?session= schickt APEX zur Anmeldung (Rejoin Sessions ist auf der Instanz nicht aktiv)
-async function sessionOf(page) {                    // lädt die Seite gerade neu (z. B. nach dem Übertragen): abwarten
-    for (let i = 0; ; i++) {
-        try { await page.waitForLoadState("load"); return await page.evaluate(() => apex.env.APP_SESSION); } catch (e) {
-            if (i >= 20) { throw e; }
-            await new Promise(r => setTimeout(r, 500));
-        }
-    }
-}
-const gotoList = async page => page.goto(URL_ + "/auftraege?session=" + await sessionOf(page));
-async function openOrder(page, nr) {
-    await Promise.all([page.waitForURL(/auftrag\?/), page.locator("td a", { hasText: nr }).first().click()]);
-    await page.waitForSelector(".offline-signature-pad canvas");
-}
-async function sign(page) {
-    const box = await page.locator(".offline-signature-pad canvas").boundingBox();
-    await page.mouse.move(box.x + 30, box.y + box.height * 0.7);
-    await page.mouse.down();
-    for (let i = 1; i <= 20; i++) { await page.mouse.move(box.x + 30 + i * 18, box.y + box.height * (0.7 - 0.4 * Math.sin(i / 3))); }
-    await page.mouse.up();
-}
-async function drafts(page) {                   // Entwürfe dieses Benutzers aus IndexedDB (Diagnose)
-    return page.evaluate(async () => {
-        const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
-        const all = await new Promise(r => { const q = db.transaction("drafts").objectStore("drafts").getAll(); q.onsuccess = () => r(q.result); });
-        return all.map(d => d.title + " " + d.request + ": " + d.status + (d.info ? " (" + d.info + ")" : "")
-            + (window.oeDebug ? " " + JSON.stringify(Object.fromEntries(Object.entries(d.items).map(([k, v]) => [k, [String(v.old).slice(0, 20), String(v.val).slice(0, 20)]]))) : "")).join("; ");
-    }).catch(e => "?" + e.message);
-}
-const putRaw = (pg, draft) => pg.evaluate(async d => {           // Entwurf samt Indexeintrag ablegen, wie offline.js es täte
-    const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
-    const { items, ...meta } = d;
-    await new Promise(r => { const t = db.transaction(["drafts", "meta"], "readwrite"); t.objectStore("drafts").put(d); t.objectStore("meta").put({ ...meta, hasPicture: true }); t.oncomplete = r; });
-}, draft);
-const IS_COPY_PAGE = html => html.includes('name="offline-copy"');
-const cachedOf = page => page.evaluate(async () => {         // Adressen der gespeicherten Seiten
-    const name = (await caches.keys()).find(n => n.startsWith("offline-pages:"));
-    return name ? (await (await caches.open(name)).keys()).map(r => r.url) : [];
-}).catch(() => []);
-async function waitFor(fn, ms = 30000, what = "Bedingung") {
-    const end = Date.now() + ms;
-    while (Date.now() < end) { if (await fn()) { return true; } await new Promise(r => setTimeout(r, 500)); }
-    throw new Error("Zeitüberschreitung: " + what);
-}
-async function serverValues(page, nr) {             // Werte so, wie das Protokoll (Seite 3) sie vom Server zeigt
-    await gotoList(page);
-    await Promise.all([page.waitForURL(/protokoll/), page.locator("tr", { hasText: nr }).first().getByRole("link", { name: "Protokoll" }).click()]);
-    return page.evaluate(async () => {
-        const text = id => document.getElementById(id + "_DISPLAY").innerText.trim();
-        const fotos = [];
-        for (const row of document.querySelectorAll(".oe-fotos tbody tr")) {
-            const img = row.querySelector("img"), note = row.querySelector('td[headers="BEMERKUNG"]');
-            if (!note) { continue; }
-            if (img) { await img.decode().catch(() => {}); }   // kaputtes Bild: Breite 0, Prüfung schlägt fehl
-            fotos.push({ text: (img ? "[Bild " + img.naturalWidth + "] " : "") + note.innerText.trim(), src: img ? img.src : "" });
-        }
-        return {
-            status: text("P3_STATUS"), befund: text("P3_BEFUND"), messwert: text("P3_MESSWERT"), asset: text("P3_ASSET_CODE"),
-            signer: text("P3_UNTERZEICHNER"), erledigt: text("P3_ERLEDIGT_AM"), fotos,
-            signature: (document.querySelector("#P3_UNTERSCHRIFT_DISPLAY img") || {}).src || ""
-        };
-    });
-}
 // Vertrag (README): nur dokumentierte APEX-API, kein APEX- oder Theme-Markup - geprüft am Quelltext (tests/contract.js)
 const { contractLint, versionLint } = require("./contract");
 
 const bytesOf = (page, src) => page.evaluate(async url => (await (await fetch(url)).arrayBuffer()).byteLength, src);
+// Barrierefreiheit der eigenen Bedienelemente (axe-core, WCAG 2 A/AA): nur Befunde an Elementen der Offline-Schicht zählen,
+// das Theme und die Seiten der Beispiel-App gehören APEX
+const axeSource = require("fs").readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
+async function a11y(pg, label) {
+    const found = await pg.evaluate(async src => {
+        if (!window.axe) { (0, eval)(src); }
+        const res = await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa"] } });
+        const ours = el => !!el && !!el.closest('[class*="offline-"], [id^="offline-"], .online-only-notice');
+        return res.violations.flatMap(v => v.nodes.filter(n => ours(document.querySelector(n.target[0]))).map(n => v.id + " @ " + n.target.join(" ")));
+    }, axeSource);
+    check(found.length === 0, "Barrierefreiheit (axe, WCAG 2 A/AA): " + label + (found.length ? " – " + found.join(" | ") : ""));
+}
+const rawDraft = async (pg, test) => (await require("./lib").rawDrafts(pg)).find(test);
+const retrigger = pg => pg.evaluate(() => window.dispatchEvent(new Event("offline-drafts")));   // wie "App kommt in den Vordergrund"
+
 const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValue().split(",")[1]).length);
 
 (async () => {
@@ -144,6 +71,16 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             return missing;
         });
         check(live.length === 0, "Bausteine im Builder und Selbstprüfung" + (live.length ? " – fehlt: " + live.join(", ") : ""));
+        await a11y(page, "Liste mit Statusanzeige");
+        await page.locator(".offline-status").click();
+        await page.locator(".offline-panel").waitFor();
+        check(await page.locator(".offline-panel[aria-labelledby=offline-panel-title] #offline-panel-title").count() === 1
+            && /Speicher des Browsers: \d+ (MB|GB) von/.test(await page.locator(".offline-panel .offline-storage").innerText()),
+            "Liste der Entwürfe mit Überschrift als Name und Speicherstand: " + await page.locator(".offline-panel .offline-storage").innerText());
+        await a11y(page, "Liste der Entwürfe");
+        await page.keyboard.press("Escape");
+        await page.locator(".offline-panel").waitFor({ state: "detached" });
+        check(true, "Escape schließt die Liste der Entwürfe");
 
         console.log("1. Online nur anmelden: der Offline-Vorrat lädt alle Seiten im Hintergrund");
         const orders = await page.locator(".offline-prefetch td a", { hasText: /^A-\d+|^T/ }).count();
@@ -209,6 +146,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(prefetchOffline === "abgelehnt", "Vorrat bekommt offline keine gespeicherte Fassung untergeschoben");
         await openOrder(page, "A-1001");
         check(await page.inputValue("#P2_TITEL") === "Wartung Heizungsanlage", "Auftrag A-1001 offline geöffnet (vorab geladen)");
+        await a11y(page, "Auftrag offline (Unterschrift, Scan-Taste)");
 
         console.log("3. Offline erfassen: Status, Befund, Messwert, Scan-Feld, Unterschrift");
         await page.selectOption("#P2_STATUS", "ERLEDIGT");
@@ -275,8 +213,8 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
 
         console.log("7. Konflikt lösen: Entwurf öffnen, Werte prüfen, speichern");
         await page.locator(".offline-status").click();
-        const state = await page.locator(".offline-panel li").innerText();
-        check(/konflikt/.test(state), "Liste zeigt Konflikt: " + state.replace(/\s+/g, " "));
+        const panelState = await page.locator(".offline-panel li").innerText();
+        check(/konflikt/.test(panelState), "Liste zeigt Konflikt: " + panelState.replace(/\s+/g, " "));
         await Promise.all([page.waitForURL(/auftrag/), page.locator(".offline-panel [data-act=open]").click()]);
         await page.waitForSelector("#P2_BEFUND_error");
         check((await page.locator("#P2_BEFUND_error").innerText()).includes("Auf dem Server inzwischen: " + OFFICE)
@@ -363,6 +301,10 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.reload();
         await openOrder(page, RUN);
         await Promise.all([page.waitForURL(/foto\?/), page.getByRole("link", { name: "Foto hinzufügen" }).click()]);
+        await a11y(page, "Foto-Seite");
+        await page.locator(".offline-photo-box button").focus();   // Tastatur: Enter auf der Schaltfläche öffnet die Dateiauswahl
+        const [chooser] = await Promise.all([page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => [null]), page.keyboard.press("Enter")]);
+        check(!!chooser, "Foto-Schaltfläche per Tastatur: Enter öffnet die Dateiauswahl");
         await page.setInputFiles(".offline-photo-box input[type=file]", require("path").join(__dirname, "fixtures", "foto.jpg"));
         await waitFor(async () => (await page.inputValue("#P4_FOTO")).startsWith("data:image/jpeg"), 10000, "Foto verkleinert");
         const photo = await page.evaluate(async () => {
@@ -398,6 +340,13 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(viewerWidth === 1600, "offline: Klick zeigt das Foto groß (" + viewerWidth + " px)");
         await page.locator(".offline-viewer").click();
         await page.locator(".offline-viewer").waitFor({ state: "detached" });
+        await firstPending.focus();                                 // Tastatur: Enter auf dem Vorschaubild zeigt es groß, Escape schließt
+        await page.keyboard.press("Enter");
+        const viewerByKey = await page.locator(".offline-viewer[aria-label]").waitFor({ timeout: 5000 }).then(() => true, () => false);
+        await page.keyboard.press("Escape");
+        await page.locator(".offline-viewer").waitFor({ state: "detached" });
+        check(viewerByKey, "Vorschaubild per Tastatur: Enter zeigt groß, Escape schließt");
+        await a11y(page, "Auftrag mit offenen Fotos");
         const savedDraft = await page.evaluate(async note => {     // für 11e: Entwurf, wie er auf dem Gerät lag
             const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
             const all = await new Promise(r => { const q = db.transaction("drafts").objectStore("drafts").getAll(); q.onsuccess = () => r(q.result); });
@@ -462,7 +411,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await Promise.all([page.waitForURL(/auftrag\?/, { timeout: 10000 }), page.getByRole("button", { name: "Speichern" }).click()]);
         await page.waitForSelector("text=im Hintergrund übertragen", { timeout: 5000 }).catch(() => {});
         check(Date.now() - started < 10000, `online gespeichert und sofort zurück (${Date.now() - started} ms), Übertragung im Hintergrund`);
-        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 180000, "Übertragung großes Foto");
+        await waitFor(() => noneOpen(page), 180000, "Übertragung großes Foto");
         const withBig = await serverValues(desk, RUN);
         const large = withBig.fotos.find(f => f.text.endsWith("Groß " + RUN));
         const largeBytes = large ? await bytesOf(desk, large.src) : 0;
@@ -625,7 +574,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
         await waitFor(async () => /^Online/.test(await pill(page)), 15000, "online");
         await Promise.all([page.waitForURL(/auftraege/, { timeout: 60000 }), page.getByRole("button", { name: "Anlegen" }).click()]);
-        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 60000, "keine Entwürfe");
+        await waitFor(() => noneOpen(page), 60000, "keine Entwürfe");
         await page.waitForTimeout(3000);                             // eine zweite Übertragung hätte jetzt stattgefunden
         await gotoList(desk);
         check(await desk.locator("td", { hasText: RUN + "C" }).count() === 1, "wieder geöffnete Neuanlage online gespeichert: genau ein Auftrag " + RUN + "C");
@@ -660,7 +609,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(postCut && /1 offen/.test(await pill(page)), "Verbindung weg während des Online-Speicherns: als Entwurf gesichert (" + await drafts(page) + ")");
         await field.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event("online")));
-        await waitFor(async () => { const t = await pill(page).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 60000, "nachgesendet");
+        await waitFor(() => noneOpen(page), 60000, "nachgesendet");
         const a5 = await serverValues(desk, "A-1005");
         check(a5.befund === "Abbruch " + RUN, "nach dem Abbruch nachgesendet: Befund auf dem Server");
 
@@ -686,6 +635,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await gotoList(page);
         await openOrder(page, "A-1001");
         await page.evaluate(() => apex.jQuery(apex.gPageContext$).trigger("apexpagesubmit", ["SAVE"]));   // APEX sendet, ohne dass die Dynamic Action lief
+        await waitFor(async () => /gestört/.test(await pill(page)), 5000, "Anzeige gestört").catch(() => {});
         check(/gestört/.test(await pill(page)) && await page.evaluate(() => window.offlineCapture.takes("SAVE")) === false,
             "Dynamic Action fehlt: Anzeige „" + await pill(page) + "“, Erfassung abgeschaltet");
         await page.reload();
@@ -730,9 +680,108 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await proxied.unroute(/\/auftrag\?/, proxyRoute);
         await proxied.locator(".offline-status").click();
         await proxied.locator(".offline-panel [data-act=sync]").click();
-        await waitFor(async () => { const t = await pill(proxied).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 60000, "nachgesendet");
+        await waitFor(() => noneOpen(proxied), 60000, "nachgesendet");
         check((await serverValues(desk, "A-1004")).befund === "Hinter Proxy " + RUN, "„Jetzt übertragen“ sendet nach: Befund auf dem Server");
         await proxyCtx.close();
+
+        console.log("13f. Browser-Speicher voll: offline bleibt die Eingabe im Formular mit klarem Hinweis, online speichert APEX selbst");
+        const fullCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });
+        await fullCtx.addInitScript(() => {                         // Schreiben in "drafts" scheitert wie bei vollem Speicher: Transaktion abgebrochen
+            const put = IDBObjectStore.prototype.put;
+            IDBObjectStore.prototype.put = function (...args) {
+                if (window.oeFull && this.name === "drafts") { this.transaction.abort(); throw new DOMException("Speicher voll", "QuotaExceededError"); }
+                return put.apply(this, args);
+            };
+        });
+        const fullPage = await fullCtx.newPage();
+        fullPage.on("pageerror", e => errors.push(e.message));
+        await login(fullPage);
+        await waitFor(async () => { const t = await pill(fullPage); return /^Online/.test(t) && settled(t); }, 60000, "Vorrat");
+        await fullCtx.setOffline(true);
+        await fullPage.reload();
+        await openOrder(fullPage, "A-1005");
+        await fullPage.evaluate(() => { window.oeFull = true; });
+        await fullPage.fill("#P2_BEFUND", "Voll " + RUN);
+        await fullPage.getByRole("button", { name: "Speichern" }).click();
+        const fullNote = await fullPage.locator(".ui-dialog", { hasText: "Speicher" }).innerText({ timeout: 10000 }).catch(() => "");
+        check(/Speicher des Browsers ist voll/.test(fullNote) && /auftrag\?/.test(fullPage.url()) && await fullPage.inputValue("#P2_BEFUND") === "Voll " + RUN
+            && await drafts(fullPage) === "", "offline: Hinweis „" + fullNote.replace(/\s+/g, " ").slice(0, 90) + "…“, Eingabe bleibt im Formular, kein halber Entwurf");
+        await fullPage.locator(".ui-dialog").getByRole("button", { name: "OK" }).click();
+        await fullCtx.setOffline(false);
+        await fullPage.evaluate(() => window.dispatchEvent(new Event("online")));
+        await waitFor(async () => /^Online/.test(await pill(fullPage)), 15000, "online");
+        await gotoList(fullPage);                                    // online die aktuelle Seite öffnen (eine gespeicherte Fassung kann nicht selbst speichern)
+        await openOrder(fullPage, "A-1005");
+        await fullPage.evaluate(() => { window.oeFull = true; });
+        await fullPage.fill("#P2_BEFUND", "Voll " + RUN);
+        await Promise.all([fullPage.waitForURL(/auftraege/, { timeout: 30000 }), fullPage.getByRole("button", { name: "Speichern" }).click()]);
+        check((await serverValues(desk, "A-1005")).befund === "Voll " + RUN && await drafts(fullPage) === "", "online: APEX speichert selbst, ohne Entwurf");
+        await fullCtx.close();
+
+        console.log("13g. Server kurz nicht bereit (503 beim Absenden): Entwurf bleibt und wird nach einer Minute automatisch erneut versucht");
+        const downCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE", serviceWorkers: "block" });
+        const down = await downCtx.newPage();
+        down.on("pageerror", e => errors.push(e.message));
+        down.on("dialog", d => d.accept());
+        let outage = 1;                                             // genau ein Absenden im Rahmen bekommt 503
+        await down.route(/wwv_flow\.accept/, async route => {   // Absenden der Seite (Test-Hilfe, kein Vertrag)
+            if (outage > 0 && route.request().frame() !== down.mainFrame() && route.request().method() === "POST") {
+                outage--;
+                return route.fulfill({ status: 503, contentType: "text/html", body: "<h1>Service Unavailable</h1>" });
+            }
+            return route.continue();
+        });
+        await login(down);
+        await openOrder(down, "A-1003");
+        await down.fill("#P2_BEFUND", "Kurz nicht bereit " + RUN);
+        const outageAt = Date.now();
+        await Promise.all([down.waitForURL(/auftraege/, { timeout: 60000 }), down.getByRole("button", { name: "Speichern" }).click()]);
+        await waitFor(async () => /1 offen/.test(await pill(down)), 10000, "1 offen");
+        const downDraft = await rawDraft(down, d => d.page === "2");
+        check(outage === 0 && !!downDraft && downDraft.status === "fehler" && /Service Unavailable/.test(downDraft.info) && downDraft.tries === 1
+            && downDraft.retryAt > outageAt + 50000 && downDraft.retryAt < outageAt + 90000,
+            "Entwurf bleibt als fehler mit Wiederholung in einer Minute: " + await drafts(down));
+        await down.locator(".offline-status").click();
+        check(/automatisch erneut versucht/.test(await down.locator(".offline-panel li").innerText()), "Liste der Entwürfe nennt den nächsten Versuch");
+        await down.keyboard.press("Escape");
+        await down.waitForTimeout(3000);                             // vor der Zeit passiert nichts
+        await retrigger(down);
+        await down.waitForTimeout(3000);
+        check((await rawDraft(down, d => d.page === "2") || {}).status === "fehler", "vor der Zeit wird nicht gesendet");
+        await putRaw(down, { ...downDraft, retryAt: Date.now() - 1 });   // die Minute ist um
+        await retrigger(down);
+        await waitFor(() => noneOpen(down), 60000, "Wiederholung");
+        check((await serverValues(desk, "A-1003")).befund === "Kurz nicht bereit " + RUN, "automatische Wiederholung: Befund auf dem Server");
+        await downCtx.close();
+
+        console.log("13h. Auftrag in der Datenbank gesperrt (ORA-20105 über data-retry der App): Foto wird automatisch erneut versucht");
+        if (!process.env.OE_SQLCL) {
+            console.log("           übersprungen: OE_SQLCL nicht gesetzt (Befehl, der SQL von der Standardeingabe als Parsing Schema ausführt)");
+        } else {
+            const { spawn } = require("child_process");
+            const lock = spawn("bash", ["-c", process.env.OE_SQLCL], { stdio: ["pipe", "pipe", "pipe"] });   // zweite Sitzung hält die Zeile 40 s
+            let lockOut = "";
+            lock.stdout.on("data", d => { lockOut += d; }); lock.stderr.on("data", d => { lockOut += d; });
+            lock.stdin.end(`select id from oe_auftrag where nr = '${RUN}' for update;\nexec dbms_session.sleep(40)\nrollback;\nexit\n`);
+            await new Promise(r => setTimeout(r, 8000));
+            await gotoList(page);
+            await openOrder(page, RUN);
+            await Promise.all([page.waitForURL(/foto\?/), page.getByRole("link", { name: "Foto hinzufügen" }).click()]);
+            await page.setInputFiles(".offline-photo-box input[type=file]", require("path").join(__dirname, "fixtures", "foto.jpg"));
+            await waitFor(async () => (await page.inputValue("#P4_FOTO")).startsWith("data:image/jpeg"), 10000, "Foto");
+            await page.fill("#P4_BEMERKUNG", "Gesperrt " + RUN);
+            await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
+            await waitFor(async () => { const d = await rawDraft(page, x => x.page === "4"); return !!d && d.status === "fehler"; }, 60000, "Ablehnung durch die Sperre").catch(() => {});
+            const locked = await rawDraft(page, x => x.page === "4");
+            check(!!locked && locked.status === "fehler" && /gerade bearbeitet/.test(locked.info) && locked.retryAt > Date.now(),
+                "Sperre: Entwurf fehler mit Wiederholung (" + (locked ? locked.info : "kein Entwurf; SQLcl: " + lockOut.trim().slice(-200)) + ")");
+            await new Promise(r => { lock.on("close", r); setTimeout(r, 45000); });   // Sperre freigegeben
+            if (locked) { await putRaw(page, { ...locked, retryAt: Date.now() - 1 }); }
+            await retrigger(page);
+            await waitFor(() => noneOpen(page), 90000, "Foto nach der Sperre");
+            const afterLock = (await serverValues(desk, RUN)).fotos.filter(f => f.text.endsWith("Gesperrt " + RUN));
+            check(afterLock.length === 1, "nach der Sperre automatisch übertragen: Foto genau einmal im Protokoll");
+        }
 
         console.log("14. Aufräumen: Testaufträge samt Fotos im Büro löschen");
         for (const nr of [RUN + "C", RUN + "B", RUN]) {
@@ -744,28 +793,17 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await gotoList(desk);
         check(await desk.locator("td", { hasText: RUN }).count() === 0, "Testaufträge gelöscht");
 
-        check(loginPill === 0, "Anmeldeseite ohne Statusanzeige");
+        check(state.loginPill === 0, "Anmeldeseite ohne Statusanzeige");
         check(errors.length === 0, "keine JavaScript-Fehler" + (errors.length ? ": " + errors.join(" | ") : ""));
     } catch (e) {
         check(false, "Abbruch: " + e.message);
         console.log("           Entwürfe: " + await drafts(page) + " | Seite: " + page.url().replace(URL_, ""));
         await page.screenshot({ path: "tests/.state/abbruch.png", fullPage: true }).catch(() => {});
     } finally {
-        try {                                                        // auch nach einem Abbruch: Testaufträge dieses Laufs entfernen
-            const sweeper = await office.newPage();
-            sweeper.on("dialog", d => d.accept());
-            await login(sweeper);
-            for (let guard = 0; guard < 10; guard++) {
-                await gotoList(sweeper);
-                const link = sweeper.locator("td a", { hasText: RUN }).first();
-                if (!await link.count()) { break; }
-                await Promise.all([sweeper.waitForURL(/auftrag\?/), link.click()]);
-                await sweeper.getByRole("button", { name: "Löschen", exact: true }).click();
-                await Promise.all([sweeper.waitForURL(/auftraege/), sweeper.locator(".ui-dialog").getByRole("button", { name: "Löschen", exact: true }).click()]);
-            }
-        } catch (e) { console.log("           Aufräumen nicht möglich: " + e.message); }
+        try { await sweep(office, RUN); }                             // auch nach einem Abbruch: Testaufträge dieses Laufs entfernen
+        catch (e) { console.log("           Aufräumen nicht möglich: " + e.message); }
         await browser.close();
     }
-    console.log(failed ? `\n${failed} Prüfung(en) fehlgeschlagen.` : "\nAlle Prüfungen bestanden.");
-    process.exit(failed ? 1 : 0);
+    console.log(state.failed ? `\n${state.failed} Prüfung(en) fehlgeschlagen.` : "\nAlle Prüfungen bestanden.");
+    process.exit(state.failed ? 1 : 0);
 })();

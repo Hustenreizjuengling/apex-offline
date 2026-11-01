@@ -63,10 +63,12 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
    die Statusanzeige; ohne Eintrag steht sie unten links. Vorlage: `apex_toolkit/shared-components/lists.apx`.
 6. **Globale Seite (Seite 0):** drei Komponenten, Vorlage `apex_toolkit/pages/p00000-global-page.apx`:
    * Region „Offline-Kennung“, Typ *Static Content*, Template *Blank with Attributes*, HTML
-     `<span id="offline-page" hidden data-user="&APP_USER."></span>`, Server-side Condition *User is Authenticated
-     (not public)*. Nur Seiten mit dieser Kennung speichert der Service Worker; Anmelde- und Fehlerseiten tragen
-     sie nicht. Den Benutzer speichert er mit und liefert eine gespeicherte Seite nur dem Benutzer aus, der sie
-     geladen hat (Gerät weitergegeben).
+     `<span id="offline-page" hidden data-user="&APP_USER." data-retry="gerade bearbeitet"></span>`, Server-side
+     Condition *User is Authenticated (not public)*. Nur Seiten mit dieser Kennung speichert der Service Worker;
+     Anmelde- und Fehlerseiten tragen sie nicht. Den Benutzer speichert er mit und liefert eine gespeicherte Seite
+     nur dem Benutzer aus, der sie geladen hat (Gerät weitergegeben). `data-retry` (optional) ist ein regulärer
+     Ausdruck für Fehlertexte der eigenen App, die nach kurzer Zeit von selbst verschwinden – siehe
+     [Prüfungen offline](#prüfungen-offline).
    * Region „Offline-Vorrat“, Typ *List*, Liste *Navigation Menu*, Template *Links List*, CSS-Klassen
      `offline-prefetch offline-hidden`, Bedingung wie oben: die Menüseiten für den Offline-Vorrat.
    * Dynamic Action „Offline-Erfassung“: Ereignis *Before Page Submit*, Client-side Condition *JavaScript
@@ -101,6 +103,14 @@ Online erscheint ihre Meldung oben auf der Seite (nicht am Feld), die Eingaben b
 Funkloch bekommt der Entwurf den Status *fehler* mit der Meldung; der Anwender öffnet ihn, sieht die Meldung
 oben und korrigiert. Einfache Bereichs- und Pflichtprüfungen deshalb am Item festlegen, echte Geschäftsregeln
 (Abgleich mit anderen Tabellen, mehrere Datensätze) als Validierung.
+
+**Vorübergehende Serverfehler** sind keine Ablehnung: Zeile gerade gesperrt (ORA-00054, ORA-30006), Verbindung
+zur Datenbank weg (ORA-03113, ORA-12541 …), Paket gerade neu übersetzt (ORA-04068), ORDS nicht bereit („Service
+Unavailable“, „Bad Gateway“). Solche Entwürfe bleiben *fehler* mit dem Text, werden aber nach 1, 5 und 15 Minuten
+automatisch erneut gesendet; die Liste der Entwürfe nennt den nächsten Versuch, *Jetzt übertragen* wartet nicht.
+Erst nach dem dritten Fehlversuch ist der Anwender dran. Eigene Texte der App – etwa „Der Auftrag wird gerade
+bearbeitet“ aus dem Foto-Paket, online über `#SQLERRM_TEXT#` ohne ORA-Nummer – stehen als regulärer Ausdruck in
+`data-retry` an der Seitenkennung (Schritt 6); ohne Treffer gilt eine Meldung als Validierungsfehler.
 
 Die Meldungen der Browser-Prüfung sind APEX-Texte. `shared-components/messages.apx` stellt die wichtigsten
 (und die Knöpfe der APEX-Dialoge) auf Deutsch (*Shared Components → Text Messages*, „Used in JavaScript"), falls das deutsche Sprachpaket
@@ -190,7 +200,9 @@ Am Platz des Eintrags „Offline-Status“ der Navigationsleiste steht der Zusta
 Übertragung – die Zahl offener Entwürfe sinkt dabei Entwurf für Entwurf – und **„lädt“** während des
 Offline-Vorrats. **„Anmeldung nötig“** heißt: die Sitzung ist abgelaufen, die Entwürfe warten; die Liste der
 Entwürfe hat dann den Knopf *Anmelden und übertragen*. In Listen sind Datensätze mit offenem Entwurf markiert
-(●). Ein Klick auf die Anzeige öffnet die Liste der Entwürfe mit *Öffnen*, *Verwerfen* und *Jetzt übertragen*;
+(●). **„Speicher knapp“** heißt: der Browser-Speicher ist zu über 90 % belegt – offene Erfassungen übertragen lassen,
+dann wird Platz frei; die Liste der Entwürfe zeigt den Speicherstand. Ist er voll, bleibt eine Offline-Eingabe im
+Formular stehen, mit einem Hinweis, was zu tun ist. Ein Klick auf die Anzeige öffnet die Liste der Entwürfe mit *Öffnen*, *Verwerfen* und *Jetzt übertragen*;
 Foto-Entwürfe zeigen ein kleines Vorschaubild (beim Speichern erzeugt, einige KB – die Liste lädt nie die Fotos selbst). Jeder Entwurf heißt wie die Seite plus ihr erster ausgefüllter Wert,
 z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehört also nach oben. Neuanlagen erscheinen außerdem dort,
 wo sie hingehören (Regionen mit `offline-drafts`): ein noch nicht übertragenes Foto am Auftrag, ein offline
@@ -209,7 +221,7 @@ nötig“.
 | Status | Bedeutung |
 |---|---|
 | wartet | wird automatisch übertragen, sobald der Server erreichbar ist (ggf. nach Anmeldung) |
-| fehler | der Server hat abgelehnt (z. B. Validierung) – öffnen, korrigieren, speichern |
+| fehler | der Server hat abgelehnt (z. B. Validierung) – öffnen, korrigieren, speichern. War es ein vorübergehender Fehler (Sperre, Server nicht bereit), steht daneben „wird … automatisch erneut versucht“ – nichts zu tun |
 | konflikt | dasselbe Feld wurde inzwischen auf dem Server geändert – öffnen, entscheiden, speichern |
 | unklar | Neuanlage, bei der die Verbindung während des Speicherns abriss – erst prüfen, ob der Datensatz schon existiert, dann öffnen oder verwerfen. Auf Seiten mit `offline-queue` kommt das nicht vor: dort wird einfach erneut gesendet |
 
@@ -399,6 +411,8 @@ Was danach auf den Geräten passiert:
 * **Neu anmelden:** Der Import beendet alle Sitzungen der App. Geräte mit offenen Entwürfen übertragen erst
   nach der nächsten Anmeldung (Status *wartet*, „Anmeldung erforderlich“) – es geht nichts verloren. Releases
   deshalb nicht mitten am Arbeitstag einspielen.
+* **Ab 1.16.0** ist die Foto-Schaltfläche ein `<button>` statt eines `<label>` (per Tastatur erreichbar); eigenes
+  CSS auf `.offline-photo-box label` anpassen.
 * **Offene Entwürfe** aus der alten Fassung werden durch die neue Seite übertragen. Gibt es ein Feld nicht
   mehr, bekommt der Entwurf den Status *fehler* („Nicht übernommen: …"); verlangt die neue Fassung ein
   zusätzliches Pflichtfeld, lehnt der Server ab. In beiden Fällen öffnet der Anwender den Entwurf,
@@ -417,7 +431,8 @@ Was danach auf den Geräten passiert:
 ## Vertrag: woran die Schicht in APEX hängt
 
 Die Schicht stützt sich nur auf drei Dinge: **dokumentierte APEX-API**, **deklarative Builder-Funktionen mit
-beschriebenem Verhalten** und **Webstandards** (DOM, Fetch, Service Worker, Cache API, IndexedDB, Web Locks).
+beschriebenem Verhalten** und **Webstandards** (DOM, Fetch, Service Worker, Cache API, IndexedDB, Web Locks,
+Storage API).
 Interne APEX-Funktionen, von APEX erzeugtes Markup oder Skript, Klassen und IDs des Universal Theme und
 APEX-interne Adressen oder Antwortformate nutzt sie nicht. Testschritt 0 prüft das am Quelltext; neue Stellen
 gehören in diese Liste oder werden nicht gebaut.
@@ -488,18 +503,30 @@ oder Theme-Markup lesen; dazu die Bausteine im Builder und die Selbstprüfung. D
 Offline-Vorrat, Liste und nie geöffneter Auftrag offline, Erfassen mit
 Unterschrift, Prüfung am Item, Neuanlage, automatische Übertragung, Konflikt, abgelaufene Sitzung mit
 neuer Anmeldung, Scannen mit simulierter Kamera ohne Zugriff auf fremde Server, Verwerfen, Foto, Seite
-nur für online, Online-Speichern über den Rahmen (Ablehnung, wieder geöffnete Neuanlage, Verbindungsabbruch).
+nur für online, Online-Speichern über den Rahmen (Ablehnung, wieder geöffnete Neuanlage, Verbindungsabbruch),
+voller Browser-Speicher, vorübergehende Serverfehler (503 beim Absenden; gesperrter Auftrag, wenn `OE_SQLCL`
+einen SQLcl-Aufruf als Parsing Schema nennt) und die Barrierefreiheit der eigenen Bedienelemente (axe-core,
+WCAG 2 A/AA, Tastatur).
 
 ```text
 npm install                                  # einmalig: Playwright
 npx playwright install chromium              # einmalig, falls Chromium noch fehlt
 npm run lint                                 # ohne Instanz: Vertrag, Syntax, Versionsnummer (läuft auch als GitHub Action)
 OE_URL=https://<server>/ords/r/<workspace>/erfassung OE_USER=<benutzer> OE_PASSWORD=<kennwort> npm test
+OE_SQLCL="sql -S -L <schema>/<kennwort>@//<server>:1521/<service>" ...   # optional: Schritt 13h sperrt einen Auftrag in der Datenbank
+OE_MASS=30 ... npm run test:mass                                          # Massentest: 30 Fotos und 5 Änderungen auf einmal
 ```
 
-Der Test legt zwei Testaufträge mit Fotos an (Kennung `T…`) und löscht sie am Ende wieder; die fünf
-Beispielaufträge ändert er. Er dauert etwa sechs Minuten. Was sich je Version geändert hat, steht in
+Der Test legt Testaufträge mit Fotos an (Kennung `T…`) und löscht sie am Ende wieder; die fünf
+Beispielaufträge ändert er. Er dauert etwa zehn Minuten. Der Massentest misst Gesamtdauer, Dauer je Entwurf
+(Seite laden / absenden) und den Heap der Seite; Stand 1.16.0: 35 Entwürfe in 56 s, 1,6 s je Entwurf, 190 MB.
+Gemeinsame Hilfen der Tests liegen in `tests/lib.js`. Was sich je Version geändert hat, steht in
 [CHANGELOG.md](CHANGELOG.md).
+
+**Nächtlich auf GitHub:** `.github/workflows/browsertest.yml` baut im Runner eine eigene Instanz auf
+(`tests/ci/instance.sh`: Oracle Database Free im Container, APEX und ORDS vom Oracle-Download, Workspace und
+Beispiel-App) und lässt Browsertest und Massentest laufen – etwa 40 Minuten, auch von Hand startbar („Run
+workflow“). Das Skript taugt ebenso für eine Wegwerf-Instanz auf dem eigenen Rechner mit Docker.
 
 `tests/smoke_test.sql` prüft die Datenbankobjekte (Fotos dekodieren, Fehlermeldungen, doppelt gesendet) und
 ändert nichts: `sql -S -name <verbindung> @tests/smoke_test.sql` aus dem Projektordner.
