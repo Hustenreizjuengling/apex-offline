@@ -216,6 +216,10 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.fill("#P2_MESSWERT", "42,5");
         await page.fill("#P2_ASSET_CODE", "ANL-" + RUN);
         await page.fill("#P2_UNTERZEICHNER", "Erika Muster");
+        const before = await page.inputValue("#P2_UNTERSCHRIFT");     // aus früheren Läufen kann schon eine Unterschrift stehen
+        const pad = await page.locator(".offline-signature-pad canvas").boundingBox();
+        await page.mouse.click(pad.x + pad.width / 2, pad.y + pad.height / 2);   // nur getippt, kein Strich
+        check(await page.inputValue("#P2_UNTERSCHRIFT") === before, "Tippen ohne Strich ändert die Unterschrift nicht");
         await sign(page);
         check((await page.inputValue("#P2_UNTERSCHRIFT")).startsWith("data:image/"), "Unterschrift als Bild im Item");
         await Promise.all([page.waitForURL(/auftraege/), page.getByRole("button", { name: "Speichern" }).click()]);
@@ -634,6 +638,49 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             "Dynamic Action fehlt: Anzeige „" + await pill(page) + "“, Erfassung abgeschaltet");
         await page.reload();
         await page.waitForSelector(".offline-status");
+
+        console.log("13d. Browser-Speicher gesperrt: Erfassung schaltet sich ab, APEX speichert selbst");
+        const noStoreCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });
+        await noStoreCtx.addInitScript(() => { indexedDB.open = () => { throw new DOMException("Speicher gesperrt", "SecurityError"); }; });
+        const noStore = await noStoreCtx.newPage();
+        noStore.on("dialog", d => d.accept());
+        await login(noStore);
+        await openOrder(noStore, "A-1004");
+        const noStoreState = await noStore.evaluate(() => ({ pill: document.querySelector(".offline-status").textContent, takes: window.offlineCapture.takes("SAVE") }));
+        check(/gestört/.test(noStoreState.pill) && noStoreState.takes === false, "Anzeige „" + noStoreState.pill + "“, Erfassung abgeschaltet");
+        await noStore.locator(".offline-status").click();
+        check(/Browser-Speicher/.test(await noStore.locator(".offline-panel").innerText()), "Liste der Entwürfe nennt den Grund");
+        await noStore.keyboard.press("Escape");
+        await noStore.fill("#P2_BEFUND", "Ohne Speicher " + RUN);
+        await Promise.all([noStore.waitForURL(/auftraege/), noStore.getByRole("button", { name: "Speichern" }).click()]);
+        check((await serverValues(desk, "A-1004")).befund === "Ohne Speicher " + RUN, "ohne Browser-Speicher speichert APEX selbst");
+        await noStoreCtx.close();
+
+        console.log("13e. Online speichern, der Rahmen bekommt eine Fremdseite (Hotspot, Proxy): Erfassung bleibt als Entwurf erhalten");
+        const proxyCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE", serviceWorkers: "block" });
+        const proxied = await proxyCtx.newPage();
+        proxied.on("dialog", d => d.accept());
+        let proxyHits = 0;
+        const proxyRoute = async route => {                         // nur die Übertragungsseite im Rahmen, nicht das Hauptfenster
+            if (route.request().frame() !== proxied.mainFrame() && route.request().isNavigationRequest()) {
+                proxyHits++;
+                return route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>Hotspot</title><h1>Bitte anmelden</h1>" });
+            }
+            return route.continue();
+        };
+        await proxied.route(/\/auftrag\?/, proxyRoute);
+        await login(proxied);
+        await openOrder(proxied, "A-1004");
+        await proxied.fill("#P2_BEFUND", "Hinter Proxy " + RUN);
+        await Promise.all([proxied.waitForURL(/auftraege/, { timeout: 60000 }), proxied.getByRole("button", { name: "Speichern" }).click()]);
+        const proxyDrafts = await drafts(proxied);
+        check(proxyHits > 0 && /1 offen/.test(await pill(proxied)) && /fehler/.test(proxyDrafts), "Fremdseite statt APEX: Entwurf bleibt erhalten (" + proxyDrafts + ")");
+        await proxied.unroute(/\/auftrag\?/, proxyRoute);
+        await proxied.locator(".offline-status").click();
+        await proxied.locator(".offline-panel [data-act=sync]").click();
+        await waitFor(async () => { const t = await pill(proxied).catch(() => "offen"); return !/offen/.test(t) && settled(t); }, 60000, "nachgesendet");
+        check((await serverValues(desk, "A-1004")).befund === "Hinter Proxy " + RUN, "„Jetzt übertragen“ sendet nach: Befund auf dem Server");
+        await proxyCtx.close();
 
         console.log("14. Aufräumen: Testaufträge samt Fotos im Büro löschen");
         for (const nr of [RUN + "C", RUN + "B", RUN]) {

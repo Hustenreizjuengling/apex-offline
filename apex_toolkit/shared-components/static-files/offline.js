@@ -27,7 +27,8 @@
  */
 (function (apex, $) {
     "use strict";
-    if (!apex || !apex.env || !window.indexedDB) { return; }
+    if (!apex || !apex.env) { return; }
+    // Fehlt IndexedDB oder ist es gesperrt, meldet allDrafts das als "Offline gestört" - statt still nichts zu tun
 
     const env = apex.env;
     const BASE = location.pathname.replace(/[^/]*$/, "");                 // /ords/r/<workspace>/<app>/
@@ -144,11 +145,17 @@
     /* ---------- Entwürfe: IndexedDB, eine Datenbank je App ---------- */
 
     const db = new Promise((resolve, reject) => {
-        const open = indexedDB.open("offline-" + env.APP_ID, 1);
+        if (!window.indexedDB) { return reject(new Error("IndexedDB fehlt")); }
+        const open = indexedDB.open("offline-" + env.APP_ID, 1);   // kann synchron werfen (gesperrter Speicher): Ablehnung
         open.onupgradeneeded = () => open.result.createObjectStore("drafts", { keyPath: "id" });
-        open.onsuccess = () => resolve(open.result);
+        open.onsuccess = () => {
+            open.result.onclose = () => disable("Browser-Speicher wurde geschlossen");   // z. B. iOS: Verbindung weggenommen
+            resolve(open.result);
+        };
         open.onerror = () => reject(open.error);
+        open.onblocked = () => reject(new Error("IndexedDB blockiert"));
     });
+    db.catch(() => {});                           // gemeldet wird der Fehler in allDrafts
 
     async function store(mode, fn) {
         const tx = (await db).transaction("drafts", mode);
@@ -159,7 +166,11 @@
         });
     }
     const allDrafts = () => store("readonly", s => s.getAll())
-        .then(list => list.filter(d => d.user === env.APP_USER).sort((a, b) => a.ts - b.ts));
+        .then(list => list.filter(d => d.user === env.APP_USER).sort((a, b) => a.ts - b.ts))
+        .catch(e => {                             // Speicher nicht nutzbar: abschalten (APEX speichert normal), nie still
+            disable("Browser-Speicher nicht nutzbar (" + ((e && (e.name || e.message)) || "IndexedDB") + ")");
+            return [];
+        });
     const putDraft = d => store("readwrite", s => s.put(d));
     const deleteDraft = id => store("readwrite", s => s.delete(id));
     // Entwurf nach dem Senden ändern (change) oder löschen - aber nur, wenn er inzwischen nicht neu gespeichert wurde
@@ -324,7 +335,9 @@
             refetch(d, result, true);
             apex.page.cancelWarnOnUnsavedChanges();
             if (result.url) { location.href = result.url; } else { leave("Gespeichert."); }   // die Seite, die der Rahmen danach zeigte
-        } else if (result.status === "fehler" && !result.lost) {   // vom Server abgelehnt: Meldungen hier, Eingaben bleiben
+        } else if (result.status === "fehler" && result.messages) {   // vom Server abgelehnt: Meldungen hier, Eingaben bleiben
+            // Nur eine echte Ablehnung (Meldungen der Seite) darf den neuen Entwurf löschen. Kam statt der Seite etwas
+            // anderes (Proxy, Hotspot, Fehlerseite), bleibt er unten als "fehler" erhalten - sonst wären die Eingaben weg.
             if (existed) { await settle(d, { status: "fehler", info: result.info, resend: result.resend }); } else { await settle(d); draft = null; }
             apex.message.clearErrors();
             apex.message.showErrors((result.messages || [result.info]).map(message => ({ type: "error", location: "page", message })));
@@ -712,8 +725,8 @@
         input.style.display = "none";
         input.after(box);
         const canvas = box.firstChild, ctx = canvas.getContext("2d");
-        let last = null, own = false;
-        const blank = () => { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); };
+        let last = null, own = false, drawn = false;   // drawn: seit dem letzten Löschen wurde ein Strich gezogen
+        const blank = () => { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); drawn = false; };
         const show = value => {
             blank();
             if (/^data:image\//.test(value || "")) {
@@ -734,12 +747,14 @@
             ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.strokeStyle = "#000";
             ctx.beginPath(); ctx.moveTo(...last); ctx.lineTo(...p); ctx.stroke();
             last = p;
+            drawn = true;
         });
         canvas.addEventListener("pointerup", () => {
             if (!last) { return; }
             last = null;
-            save(canvas.toDataURL("image/png"));
+            if (drawn) { save(canvas.toDataURL("image/png")); }   // nur Tippen ist keine Unterschrift
         });
+        canvas.addEventListener("pointercancel", () => { last = null; });
         box.lastChild.addEventListener("click", () => { blank(); save(""); });
         $(input).on("change", () => { if (!own) { show(input.value); } });
         show(input.value);
@@ -1130,7 +1145,7 @@
         window.addEventListener("offline-drafts", again);        // Dialog hat einen Entwurf gespeichert
         document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { again(); } });
         // Zurück aus dem Back/Forward-Cache (z. B. nach dem Speichern): apexreadyend läuft dann nicht
-        window.addEventListener("pageshow", event => { if (event.persisted) { flash(); refresh(); again(); } });
+        window.addEventListener("pageshow", event => { if (event.persisted) { capturing = false; flash(); refresh(); again(); } });
         setInterval(async () => {
             if (document.visibilityState !== "visible" || !(await check()) || syncing || stocking || needLogin || Date.now() < nextTry) { return; }
             const waiting = (await allDrafts()).some(d => d.status === "wartet");

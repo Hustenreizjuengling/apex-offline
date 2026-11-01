@@ -1,6 +1,6 @@
 app ERFASSUNG (
     name: Offline-Erfassung
-    version: 1.14.1
+    version: 1.14.2
     logo {
         type: text
         text: Offline-Erfassung

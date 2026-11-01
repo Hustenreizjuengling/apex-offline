@@ -3,6 +3,26 @@
 Versionsnummer wie im README „Release und Update“: Fehlerkorrektur erhöht die dritte Stelle (1.14.1), neues
 Verhalten die zweite (1.15.0). Die Version steht in `apex_toolkit/application.apx` und in der Fußzeile der App.
 
+## 1.14.2 – 2026-11-01
+
+Fehlerkorrekturen.
+
+- **Erfassung konnte verloren gehen,** wenn beim Online-Speichern statt der APEX-Seite etwas anderes im
+  unsichtbaren Rahmen ankam (Hotspot-Anmeldung, Proxy- oder Fehlerseite): Das galt als Ablehnung durch den
+  Server, und ein neuer Entwurf wurde gelöscht; die Eingaben standen nur noch im offenen Formular. Jetzt löscht
+  nur eine echte Ablehnung (Meldungen der Seite); sonst bleibt der Entwurf mit Status *fehler* und dem Grund
+  erhalten, und *Jetzt übertragen* sendet ihn nach. Testschritt 13e.
+- **Browser-Speicher nicht nutzbar** (IndexedDB fehlt, gesperrt oder vom System geschlossen): Bisher brach der
+  Start still ab – keine Anzeige, kein Vorrat, kein Hinweis. Jetzt meldet die Anzeige „Offline gestört“ mit dem
+  Grund, APEX speichert normal. Testschritt 13d.
+- **Leere Unterschrift:** Ein Tippen auf das Unterschriftenfeld ohne Strich speicherte ein weißes Bild, das als
+  ausgefüllte Unterschrift galt. Gespeichert wird nur, wenn gezeichnet wurde.
+- Kommt eine Erfassungsseite aus dem Back/Forward-Cache des Browsers zurück, nimmt „Speichern“ wieder an
+  (das Merkzeichen „Speichern läuft“ wird zurückgesetzt).
+- Die Hinweisseiten des Service Workers („Keine Verbindung“, „Nur online verfügbar“) versuchen es alle 15 s
+  erneut, solange der Browser online meldet. Bisher nur einmal beim `online`-Ereignis; scheiterte dieser
+  Versuch (Netz gerade erst zurück, Server langsamer als 4 s), blieb der Hinweis stehen.
+
 ## 1.14.1 – 2026-11-01
 
 Fehlerkorrekturen, geprüft mit APEX 26.2 (Oracle AI Database 26ai Free, ORDS 26.3).

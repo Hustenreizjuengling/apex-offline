@@ -429,7 +429,7 @@ gehören in diese Liste oder werden nicht gebaut.
 
 **Selbstprüfung:** Beim Start prüft `offline.js` jede API dieser Liste und die Seitenkennung; beim Absenden prüft
 es über `apexpagesubmit`, dass *Cancel Event* gewirkt hat und der Request ankommt; der Service Worker beantwortet
-eine Probe. Fehlt etwas, schaltet sich die Offline-Erfassung ab: APEX speichert normal, offene Entwürfe bleiben auf
+eine Probe. Fehlt etwas oder ist der Browser-Speicher (IndexedDB) nicht nutzbar, schaltet sich die Offline-Erfassung ab: APEX speichert normal, offene Entwürfe bleiben auf
 dem Gerät und werden nicht gesendet, die Anzeige meldet **„Offline gestört“** mit dem Grund in der Liste der
 Entwürfe. Nichts geht verloren, nichts wird doppelt gesendet.
 
