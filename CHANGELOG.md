@@ -3,6 +3,29 @@
 Versionsnummer wie im README „Release und Update“: Fehlerkorrektur erhöht die dritte Stelle (1.14.1), neues
 Verhalten die zweite (1.15.0). Die Version steht in `apex_toolkit/application.apx` und in der Fußzeile der App.
 
+## 1.15.0 – 2026-11-01
+
+Neues Verhalten; in eigenen Apps die Region „Offline-Kennung“ auf Seite 0 nachziehen (siehe README, Schritt 6).
+
+- **Entwürfe ohne Bilddaten lesen:** Die Anzeige, die Liste der Entwürfe und die regelmäßige Prüfung lasen alle
+  Entwürfe samt Fotos (mehrere 100 KB je Foto) aus IndexedDB – alle 30 Sekunden und bei jeder Aktualisierung.
+  Jetzt gibt es einen Index (`meta`) ohne Werte und ein kleines Vorschaubild (160 px, einige KB), das beim
+  Speichern entsteht; das Foto selbst wird nur zum Übertragen, Öffnen und für die Großansicht gelesen.
+  Vorhandene Entwürfe werden beim ersten Start übernommen (ohne Vorschaubild – es kommt dann aus dem Foto).
+- **Gespeicherte Seiten gehören ihrem Benutzer:** Die Seitenkennung auf Seite 0 trägt `data-user="&APP_USER."`;
+  der Service Worker speichert den Benutzer mit und liefert eine gespeicherte Seite nur dem Benutzer aus, der sie
+  geladen hat. Bisher konnte auf einem weitergegebenen Gerät der nächste Benutzer kurz eine Seite des
+  Vorgängers sehen, wenn seine erste Seite länger als 4 Sekunden brauchte. Ohne `data-user` (alte App) wie bisher.
+  Testschritt 12c.
+- **Geduld nach dem Absenden:** In der Minute nach einem Absenden (POST) wartet der Service Worker 30 statt
+  4 Sekunden auf den Server – er ist dann erreichbar, eine gespeicherte Fassung wäre die falsche.
+- **Sende-Sperre bis zum Abschluss:** Ein Entwurf wird noch unter der Web-Locks-Sperre abgeschlossen (gelöscht
+  oder umgestuft). Ein zweites Fenster sah ihn bisher für Millisekunden als „sendet“ ohne Sperre und hätte ihn als
+  abgebrochen eingestuft.
+- **Speicher aufräumen:** Die Grenze von 500 gespeicherten Seiten greift jetzt auch bei kurzlebigen Service
+  Workern und beim Aktivieren; Datei-Caches älterer APEX-Versionen (bis auf die vorige) werden beim Aktivieren
+  entfernt.
+
 ## 1.14.2 – 2026-11-01
 
 Fehlerkorrekturen.

@@ -109,6 +109,9 @@
     const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
     const picture = d => Object.values(d.items).map(i => i.val)    // Foto im Entwurf (offline-photo), nicht die Unterschrift
         .find(v => typeof v === "string" && /^data:image\/(jpeg|webp);base64,/.test(v));
+    // Eintrag im Index "meta": alles außer den Werten (items). Anzeige, Liste der Entwürfe und die 30-s-Prüfung lesen
+    // nur den Index - Fotos (mehrere 100 KB je Entwurf) werden so nicht bei jeder Aktualisierung kopiert.
+    const light = d => { const { items, ...rest } = d; return { ...rest, hasPicture: !!picture(d) }; };
     const when = t => new Date(t).toDateString() === new Date().toDateString()      // heute "07:42", sonst "02.10., 16:10"
         ? new Date(t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
         : new Date(t).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -146,8 +149,16 @@
 
     const db = new Promise((resolve, reject) => {
         if (!window.indexedDB) { return reject(new Error("IndexedDB fehlt")); }
-        const open = indexedDB.open("offline-" + env.APP_ID, 1);   // kann synchron werfen (gesperrter Speicher): Ablehnung
-        open.onupgradeneeded = () => open.result.createObjectStore("drafts", { keyPath: "id" });
+        const open = indexedDB.open("offline-" + env.APP_ID, 2);   // kann synchron werfen (gesperrter Speicher): Ablehnung
+        open.onupgradeneeded = e => {             // Version 2 (1.15.0): Index "meta" neben den vollständigen Entwürfen "drafts"
+            const idb = open.result;
+            const drafts = e.oldVersion < 1 ? idb.createObjectStore("drafts", { keyPath: "id" }) : open.transaction.objectStore("drafts");
+            const meta = idb.createObjectStore("meta", { keyPath: "id" });
+            drafts.openCursor().onsuccess = ev => {   // vorhandene Entwürfe in den Index übernehmen (ohne Vorschaubild)
+                const cursor = ev.target.result;
+                if (cursor) { meta.put(light(cursor.value)); cursor.continue(); }
+            };
+        };
         open.onsuccess = () => {
             open.result.onclose = () => disable("Browser-Speicher wurde geschlossen");   // z. B. iOS: Verbindung weggenommen
             resolve(open.result);
@@ -157,33 +168,36 @@
     });
     db.catch(() => {});                           // gemeldet wird der Fehler in allDrafts
 
-    async function store(mode, fn) {
-        const tx = (await db).transaction("drafts", mode);
-        const req = fn(tx.objectStore("drafts"));
+    async function store(mode, fn) {              // fn(drafts, meta) liefert die Anfrage, deren Ergebnis zurückkommt
+        const tx = (await db).transaction(["drafts", "meta"], mode);
+        const req = fn(tx.objectStore("drafts"), tx.objectStore("meta"));
         return new Promise((resolve, reject) => {
             tx.oncomplete = () => resolve(req.result);
             tx.onerror = tx.onabort = () => reject(tx.error);
         });
     }
-    const allDrafts = () => store("readonly", s => s.getAll())
+    const allDrafts = () => store("readonly", (s, m) => m.getAll())   // nur der Index: ohne Werte, ohne Fotos
         .then(list => list.filter(d => d.user === env.APP_USER).sort((a, b) => a.ts - b.ts))
         .catch(e => {                             // Speicher nicht nutzbar: abschalten (APEX speichert normal), nie still
             disable("Browser-Speicher nicht nutzbar (" + ((e && (e.name || e.message)) || "IndexedDB") + ")");
             return [];
         });
-    const putDraft = d => store("readwrite", s => s.put(d));
-    const deleteDraft = id => store("readwrite", s => s.delete(id));
+    const fullDraft = id => store("readonly", s => s.get(id));      // vollständiger Entwurf mit Werten
+    const putDraft = d => store("readwrite", (s, m) => { m.put(light(d)); return s.put(d); });
+    const deleteDraft = id => store("readwrite", (s, m) => { m.delete(id); return s.delete(id); });
     // Entwurf nach dem Senden ändern (change) oder löschen - aber nur, wenn er inzwischen nicht neu gespeichert wurde
     // (zweiter Tab, erneut geöffnet): dann gewinnt die neuere Fassung und geht beim nächsten Mal raus. Liefert true/false.
-    const settle = (d, change) => store("readwrite", s => {
+    const settle = (d, change) => store("readwrite", (s, m) => {
         const req = s.get(d.id);
         req.onsuccess = () => {
             const cur = req.result;
             if (!cur || cur.ts !== d.ts) { return; }
-            if (change) { s.put({ ...cur, ...change }); } else { s.delete(d.id); }
+            if (change) { const next = { ...cur, ...change }; s.put(next); m.put(light(next)); } else { s.delete(d.id); m.delete(d.id); }
         };
         return { get result() { return !!req.result && req.result.ts === d.ts; } };
     });
+    // Vorschaubild eines Entwurfs: im Index gespeichert; Entwürfe aus Version 1 (ohne) holen es aus dem Foto
+    const thumbOf = async d => d.thumb || (d.hasPicture ? picture((await fullDraft(d.id)) || { items: {} }) : null);
 
     /* ---------- Seitenelemente lesen und setzen ---------- */
 
@@ -306,6 +320,8 @@
         const direct = online && !IS_COPY && !queued();   // online: Ergebnis abwarten wie beim normalen Speichern
         if (direct) { d.status = "sendet"; d.sentAt = Date.now(); }
         capturing = true;
+        const pic = picture(d);
+        if (pic) { d.thumb = await thumbnail(pic).catch(() => undefined); }   // kleines Vorschaubild für Index und Listen
         try {
             await putDraft(d);
         } catch (e) {
@@ -328,27 +344,33 @@
         }
         const spinner = apex.util.showSpinner();
         let result;
-        try { result = await replay(d); } finally { spinner.remove(); capturing = false; }
+        try {
+            // Den Entwurf noch unter der Sende-Sperre abschließen: ein zweites Fenster sähe sonst kurz "sendet" ohne Sperre
+            result = await replay(d, async r => {
+                // Nur eine echte Ablehnung (Meldungen der Seite) darf den neuen Entwurf löschen. Kam statt der Seite etwas
+                // anderes (Proxy, Hotspot, Fehlerseite), bleibt er unten als "fehler" erhalten - sonst wären die Eingaben weg.
+                if (r.status === "ok" || (r.status === "fehler" && r.messages && !existed)) { await settle(d); }
+                else if (r.status === "fehler" && r.messages) { await settle(d, { status: "fehler", info: r.info, resend: r.resend }); }
+                else if (r.status === "konflikt") { await settle(d, { status: "konflikt", info: r.info }); }
+                else if (r.status !== "neu") { await settle(d, { status: r.status, info: r.info, resend: r.resend }); }
+                return r;
+            });
+        } finally { spinner.remove(); capturing = false; }
         if (result.status === "ok") {
-            await settle(d);
             draft = null;
             refetch(d, result, true);
             apex.page.cancelWarnOnUnsavedChanges();
             if (result.url) { location.href = result.url; } else { leave("Gespeichert."); }   // die Seite, die der Rahmen danach zeigte
         } else if (result.status === "fehler" && result.messages) {   // vom Server abgelehnt: Meldungen hier, Eingaben bleiben
-            // Nur eine echte Ablehnung (Meldungen der Seite) darf den neuen Entwurf löschen. Kam statt der Seite etwas
-            // anderes (Proxy, Hotspot, Fehlerseite), bleibt er unten als "fehler" erhalten - sonst wären die Eingaben weg.
-            if (existed) { await settle(d, { status: "fehler", info: result.info, resend: result.resend }); } else { await settle(d); draft = null; }
+            if (!existed) { draft = null; }
             apex.message.clearErrors();
             apex.message.showErrors((result.messages || [result.info]).map(message => ({ type: "error", location: "page", message })));
         } else if (result.status === "konflikt") { // am Feld zeigen; erneut speichern übernimmt den eigenen Wert
-            await settle(d, { status: "konflikt", info: result.info });
             result.conflicts.forEach(([name, current]) => { snapshot[name] = current; });
             apex.message.clearErrors();
             apex.message.showErrors(result.conflicts.map(([name, current]) => ({ type: "error", location: ["inline", "page"], pageItem: name,
                 message: "Auf dem Server inzwischen: " + (current || "(leer)") })));
         } else {                                  // wartet, unklar, fehler beim Setzen der Werte, neu
-            if (result.status !== "neu") { await settle(d, { status: result.status, info: result.info, resend: result.resend }); }
             if (result.info === "Anmeldung erforderlich") { needLogin = true; }
             apex.page.cancelWarnOnUnsavedChanges();
             leave(result.status === "fehler" ? "Gespeichert – bitte in der Liste der Entwürfe prüfen: " + result.info
@@ -379,7 +401,8 @@
         const wanted = new URLSearchParams(location.hash.slice(1)).get("offline-draft");
         const key = pageKey(ownUrl());
         const list = await allDrafts();
-        draft = list.find(d => d.id === wanted) || list.find(d => !d.create && d.key === key && d.status !== "sendet") || null;
+        const found = list.find(d => d.id === wanted) || list.find(d => !d.create && d.key === key && d.status !== "sendet");
+        draft = found ? await fullDraft(found.id).catch(() => null) : null;
         if (!draft) { return; }
         const result = applyDraft(window, draft, false);
         if (result.already && !IS_COPY) {         // steht bereits so auf dem Server
@@ -408,7 +431,7 @@
         let sent = 0;
         const run = async () => {
             for (const { id } of await allDrafts()) {
-                const d = await store("readonly", s => s.get(id));   // frisch lesen: inzwischen verworfen?
+                const d = await fullDraft(id);    // frisch lesen: inzwischen verworfen?
                 if (!d) { continue; }
                 if (d.status === "sendet") {      // wird gerade gesendet (anderes Fenster) oder dabei abgebrochen
                     if (await inFlight(d)) { continue; }
@@ -418,14 +441,16 @@
                 if (d.status !== "wartet" || (draft && d.id === draft.id)) { continue; }
                 transmitting = true;
                 refresh();
-                const result = await replay(d);
+                const result = await replay(d, async r => {   // abschließen, solange die Sende-Sperre noch gehalten wird
+                    if (r.status === "ok") { await settle(d); }
+                    else if (r.status !== "neu") { await settle(d, { status: r.status, info: r.info, resend: r.resend }); }
+                    return r;
+                });
                 if (result.status === "neu") { continue; }   // inzwischen neu gespeichert: nächste Runde
                 if (result.status === "ok") {
-                    await settle(d);
                     sent++;
                     refetch(d, result);
                 } else {
-                    await settle(d, { status: result.status, info: result.info, resend: result.resend });
                     if (result.info === "Anmeldung erforderlich") { needLogin = true; }
                     if (result.status === "wartet") { break; } // Anmeldung oder Verbindung fehlt: später erneut
                 }
@@ -472,7 +497,10 @@
     const inFlight = async d => navigator.locks
         ? (await navigator.locks.query()).held.some(l => l.name === sendLock(d))
         : Date.now() - (d.sentAt || 0) < allowance(JSON.stringify(d.items).length) + 60000;   // ohne Web Locks: Schonfrist
-    const replay = d => (navigator.locks ? navigator.locks.request(sendLock(d), () => replayIn(d)) : replayIn(d));
+    // then(result) läuft noch unter der Sperre: der Entwurf wird abgeschlossen, bevor ein anderes Fenster ihn prüfen kann
+    const replay = (d, then) => (navigator.locks
+        ? navigator.locks.request(sendLock(d), async () => then(await replayIn(d)))
+        : replayIn(d).then(then));
 
     function replayIn(d) {
         return new Promise(resolve => {
@@ -674,8 +702,8 @@
               : "<p>Keine offenen Erfassungen.</p>")
             + '<p><button type="button" class="t-Button t-Button--hot" data-act="sync">Jetzt übertragen</button> '
             + '<button type="button" class="t-Button" data-act="close">Schließen</button></p>';
-        dialog.querySelectorAll("li[data-id]").forEach(li => {
-            const src = picture(list.find(x => x.id === li.dataset.id));
+        dialog.querySelectorAll("li[data-id]").forEach(async li => {
+            const src = await thumbOf(list.find(x => x.id === li.dataset.id)).catch(() => null);
             if (src) { const img = li.querySelector(".offline-thumb"); img.src = src; img.hidden = false; }
         });
         dialog.addEventListener("click", async event => {
@@ -698,7 +726,10 @@
             if (act === "sync") {                 // Fehler und Konflikte erneut versuchen, "unklar" nie automatisch
                 dialog.close();
                 await Promise.all(list.filter(x => x.status === "fehler" || x.status === "konflikt")
-                    .map(x => putDraft({ ...x, status: "wartet", info: "" })));
+                    .map(async x => {                 // list ist der Index: zum Umstufen den ganzen Entwurf lesen
+                        const full = await fullDraft(x.id);
+                        if (full) { await putDraft({ ...full, status: "wartet", info: "" }); }
+                    }));
                 needLogin = false;
                 if (await check()) { sync(); } else { say("Server nicht erreichbar."); }
             }
@@ -766,6 +797,19 @@
      * speichert sie per Prozess als Bild (Beispiel: pck_oe_auftrag_foto_dml). */
 
     const PHOTO_MAX = 1600, PHOTO_QUALITY = 0.8;
+    const THUMB_MAX = 160;                        // Vorschaubild im Index der Entwürfe (einige KB)
+
+    async function thumbnail(dataUrl) {           // kleines JPEG für Liste der Entwürfe und offline-drafts
+        const source = new Image();
+        source.src = dataUrl;
+        await source.decode();
+        const scale = Math.min(1, THUMB_MAX / Math.max(source.naturalWidth, source.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+        canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL("image/jpeg", 0.7);
+    }
 
     function photoField(node) {
         const input = node.matches("textarea, input") ? node : node.querySelector("textarea, input");
@@ -954,14 +998,11 @@
 
     const STATES = { wartet: "noch nicht übertragen", sendet: "wird übertragen", fehler: "abgelehnt", konflikt: "Konflikt", unklar: "unklar" };
     let shown = "";                               // zuletzt gezeigter Stand, damit nichts unnötig neu gezeichnet wird
-    let pictureUrls = [];
 
-    function blobUrl(dataUrl) {                   // Foto als Blob-Adresse statt als langer Data-URL-Text im DOM
+    function blobUrl(dataUrl) {                   // Foto als Blob-Adresse statt als langer Data-URL-Text im DOM (Aufrufer gibt sie frei)
         const comma = dataUrl.indexOf(",");
         const bytes = Uint8Array.from(atob(dataUrl.slice(comma + 1)), c => c.charCodeAt(0));
-        const url = URL.createObjectURL(new Blob([bytes], { type: dataUrl.slice(5, dataUrl.indexOf(";")) }));
-        pictureUrls.push(url);
-        return url;
+        return URL.createObjectURL(new Blob([bytes], { type: dataUrl.slice(5, dataUrl.indexOf(";")) }));
     }
 
     function showDrafts(list) {
@@ -969,8 +1010,6 @@
         const state = list.filter(d => d.create).map(d => d.id + d.status + d.ts).join();
         if (!regions.length || state === shown) { return; }
         shown = state;
-        pictureUrls.forEach(u => URL.revokeObjectURL(u));
-        pictureUrls = [];
         regions.forEach(region => {
             const keys = new Set(targetsIn([region]).map(h => { try { return pageKey(h); } catch (e) { return ""; } }));
             const mine = list.filter(d => d.create && keys.has(d.key));
@@ -979,11 +1018,11 @@
             if (!box) { box = document.createElement("ul"); box.className = "offline-drafts-list"; region.prepend(box); }
             box.replaceChildren(...mine.map(d => {
                 const li = document.createElement("li");
-                const src = picture(d);
-                if (src) {
+                if (d.thumb || d.hasPicture) {
                     const img = document.createElement("img");
                     img.alt = d.title;
-                    try { img.src = blobUrl(src); } catch (e) { img.src = src; }
+                    img.dataset.draft = d.id;     // Klick zeigt das ganze Foto aus dem Entwurf (3f)
+                    if (d.thumb) { img.src = d.thumb; } else { thumbOf(d).then(src => { if (src) { img.src = src; } }, () => {}); }
                     li.append(img);
                 }
                 const title = document.createElement("span");
@@ -999,14 +1038,20 @@
 
     /* ---------- 3f. Bilder groß ansehen: Region mit der CSS-Klasse offline-lightbox (und offene Fotos) ---------- */
 
-    document.addEventListener("click", event => {
+    document.addEventListener("click", async event => {
         const img = event.target.closest && event.target.closest(".offline-lightbox img, .offline-drafts-list img");
         if (!img || img.hidden || !img.naturalWidth) { return; }
         event.preventDefault();
+        let src = img.currentSrc || img.src, own = "";
+        if (img.dataset.draft) {                  // Vorschaubild eines Entwurfs: das ganze Foto aus dem Gerät
+            const full = await fullDraft(img.dataset.draft).catch(() => null);
+            const pic = full && picture(full);
+            if (pic) { try { src = own = blobUrl(pic); } catch (e) { src = pic; } }
+        }
         const viewer = document.createElement("dialog");
         viewer.className = "offline-viewer";
         const big = document.createElement("img");
-        big.src = img.currentSrc || img.src;
+        big.src = src;
         big.alt = img.alt;
         const caption = document.createElement("p");
         caption.textContent = ((img.closest("tr, li") || {}).innerText || img.alt || "").replace(/\s+/g, " ").trim();
@@ -1016,7 +1061,7 @@
         close.textContent = "Schließen";
         viewer.append(big, caption, close);
         viewer.addEventListener("click", () => viewer.close());   // Klick irgendwo schließt
-        viewer.addEventListener("close", () => viewer.remove());
+        viewer.addEventListener("close", () => { viewer.remove(); if (own) { URL.revokeObjectURL(own); } });
         document.body.append(viewer);
         viewer.showModal();
     });

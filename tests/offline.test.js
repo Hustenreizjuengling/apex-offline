@@ -68,6 +68,11 @@ async function drafts(page) {                   // Entwürfe dieses Benutzers au
             + (window.oeDebug ? " " + JSON.stringify(Object.fromEntries(Object.entries(d.items).map(([k, v]) => [k, [String(v.old).slice(0, 20), String(v.val).slice(0, 20)]]))) : "")).join("; ");
     }).catch(e => "?" + e.message);
 }
+const putRaw = (pg, draft) => pg.evaluate(async d => {           // Entwurf samt Indexeintrag ablegen, wie offline.js es täte
+    const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
+    const { items, ...meta } = d;
+    await new Promise(r => { const t = db.transaction(["drafts", "meta"], "readwrite"); t.objectStore("drafts").put(d); t.objectStore("meta").put({ ...meta, hasPicture: true }); t.oncomplete = r; });
+}, draft);
 const IS_COPY_PAGE = html => html.includes('name="offline-copy"');
 const cachedOf = page => page.evaluate(async () => {         // Adressen der gespeicherten Seiten
     const name = (await caches.keys()).find(n => n.startsWith("offline-pages:"));
@@ -372,12 +377,12 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await Promise.all([page.waitForURL(/auftrag\?/), page.getByRole("button", { name: "Speichern" }).click()]);
         await waitFor(async () => /1 offen/.test(await pill(page)), 10000, "1 offen");
         check(true, "Foto offline gespeichert, Anzeige: " + await pill(page));
-        await page.evaluate(async () => {                           // derselbe Entwurf ein zweites Mal (wie nach abgebrochenem Senden)
+        const photoDraft = await page.evaluate(async () => {         // derselbe Entwurf ein zweites Mal (wie nach abgebrochenem Senden)
             const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
             const all = await new Promise(r => { const q = db.transaction("drafts").objectStore("drafts").getAll(); q.onsuccess = () => r(q.result); });
-            const d = all.find(x => x.page === "4");
-            await new Promise(r => { const t = db.transaction("drafts", "readwrite"); t.objectStore("drafts").put({ ...d, id: d.id + "-kopie", ts: d.ts + 1 }); t.oncomplete = r; });
+            return all.find(x => x.page === "4");
         });
+        await putRaw(page, { ...photoDraft, id: photoDraft.id + "-kopie", ts: photoDraft.ts + 1 });
         await Promise.all([page.waitForURL(/foto\?/), page.getByRole("link", { name: "Foto hinzufügen" }).click()]);
         await page.evaluate(value => apex.item("P4_FOTO").setValue(value), corrupt);   // PNG-Kopf über JPEG-Bytes
         await page.fill("#P4_BEMERKUNG", "Beschädigt " + RUN);
@@ -387,7 +392,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await waitFor(async () => await pending.count() === 3, 10000, "offene Fotos am Auftrag").catch(() => {});
         const firstPending = pending.first().locator("img");
         const pendingWidth = await firstPending.evaluate(async img => { await img.decode().catch(() => {}); return img.naturalWidth; }).catch(() => 0);
-        check(await pending.count() === 3 && pendingWidth === 1600, `offline: ${await pending.count()} noch nicht übertragene Fotos am Auftrag, aus dem Gerät (${pendingWidth} px)`);
+        check(await pending.count() === 3 && pendingWidth === 160, `offline: ${await pending.count()} noch nicht übertragene Fotos am Auftrag, aus dem Gerät (Vorschaubild ${pendingWidth} px)`);
         await firstPending.click();
         const viewerWidth = await page.locator(".offline-viewer img").evaluate(async img => { await img.decode().catch(() => {}); return img.naturalWidth; }).catch(() => 0);
         check(viewerWidth === 1600, "offline: Klick zeigt das Foto groß (" + viewerWidth + " px)");
@@ -464,10 +469,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(!!large && largeBytes === big.bytes, `großes Foto gespeichert: ${Math.round(big.chars / 1024)} KB Data-URL, ${largeBytes} von ${big.bytes} Bytes`);
 
         console.log("11e. Abgebrochenes Senden und alter unklar-Entwurf: erneut gesendet, trotzdem nur einmal gespeichert");
-        const putBack = d => page.evaluate(async draft => {
-            const db = await new Promise(r => { const o = indexedDB.open("offline-" + apex.env.APP_ID); o.onsuccess = () => r(o.result); });
-            await new Promise(r => { const t = db.transaction("drafts", "readwrite"); t.objectStore("drafts").put(draft); t.oncomplete = r; });
-        }, d);
+        const putBack = d => putRaw(page, d);
         await gotoList(page);
         await openOrder(page, RUN);
         await putBack({ ...savedDraft, status: "sendet" });         // App mitten im Senden geschlossen
@@ -529,6 +531,24 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             mode: document.documentElement.classList.contains("offline-mode"), notice: getComputedStyle(document.querySelector(".online-only-notice")).display }));
         check(/^Offline/.test(raced.pill) && raced.mode && raced.notice === "block", "Anzeige bleibt „" + raced.pill + "“, Hinweis bleibt sichtbar");
         await raceCtx.close();
+
+        console.log("12c. Gespeicherte Seite eines anderen Benutzers: der Service Worker liefert sie nie aus");
+        await gotoList(page);
+        await page.waitForSelector(".offline-status");
+        const session12 = await sessionOf(page);
+        await page.evaluate(async () => {                           // Kopie eines fremden Benutzers unter der Adresse der Auswertung
+            const c = await caches.open((await caches.keys()).find(n => n.startsWith("offline-pages:")));
+            await c.put(location.origin + location.pathname.replace(/[^/]*$/, "") + "auswertung", new Response(
+                '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Fremd</title></head><body><span id="offline-page" hidden data-user="FREMD"></span><h1>FREMDE DATEN</h1></body></html>',
+                { headers: { "Content-Type": "text/html; charset=utf-8", "x-offline-stored": String(Date.now()), "x-offline-user": "FREMD" } }));
+        });
+        await field.setOffline(true);
+        await page.goto(URL_ + "/auswertung?session=" + session12);
+        const foreignCopy = (await page.content()).includes("FREMDE DATEN");
+        check(!foreignCopy && /Keine Verbindung/.test(await page.title()), "fremde Kopie nicht ausgeliefert, stattdessen „" + await page.title() + "“");
+        await field.setOffline(false);
+        await page.goto(URL_ + "/auswertung?session=" + session12);  // echte Fassung wieder gespeichert
+        await page.waitForSelector(".offline-status");
 
         console.log("13. Online gespeichert, danach offline geöffnet: die gespeicherte Fassung zeigt den neuen Stand");
         await gotoList(page);

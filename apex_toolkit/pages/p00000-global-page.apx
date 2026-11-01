@@ -6,12 +6,13 @@ page 0 (
 
     // Kennung fuer offline.js und offline-sw.js: nur angemeldete Seiten dieser App tragen sie
     // (nicht die Anmeldeseite, nicht die Fehlerseite von APEX). Daran erkennt die Offline-Schicht
-    // eine echte, speicherbare Seite - ohne APEX-Markup zu lesen.
+    // eine echte, speicherbare Seite - ohne APEX-Markup zu lesen. data-user: der Service Worker
+    // speichert den Benutzer mit und liefert gespeicherte Seiten nur ihm aus (Geraet weitergegeben).
     region offline-kennung (
         name: Offline-Kennung
         type: staticContent
         source {
-            htmlCode: <span id="offline-page" hidden></span>
+            htmlCode: <span id="offline-page" hidden data-user="&APP_USER."></span>
         }
         layout {
             sequence: 1000

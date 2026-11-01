@@ -20,7 +20,8 @@ der Formulare in JavaScript. Ein neues Feld ist ein neues Item im Builder, sonst
 1. **Offline-Vorrat:** Beim ersten Online-Aufruf je Sitzung lädt die App im Hintergrund alle Seiten, die
    offline gebraucht werden – ohne dass sie jemand öffnen muss (siehe unten). Der Service Worker speichert
    sie und jede weitere aufgerufene Seite. Ohne Verbindung (oder wenn der Server 4 Sekunden nicht
-   antwortet) liefert er die zuletzt gespeicherte Fassung; die Anzeige nennt dann ihren Stand.
+   antwortet; in der Minute nach einem Absenden 30 Sekunden, denn dann ist er erreichbar) liefert er die zuletzt
+   gespeicherte Fassung; die Anzeige nennt dann ihren Stand.
 2. **Speichern:** Auf Seiten mit der CSS-Klasse `offline-form` übernimmt die Dynamic Action
    „Offline-Erfassung“ der Seite 0 das Absenden (Aktion *Cancel Event*). `offline.js` prüft die Pflichtfelder
    wie online und legt nur die **geänderten Felder** (alter und neuer Wert) als Entwurf im Browser ab
@@ -62,8 +63,10 @@ Datenbankobjekte braucht die Offline-Schicht nicht. `sql/install.sql` legt nur d
    die Statusanzeige; ohne Eintrag steht sie unten links. Vorlage: `apex_toolkit/shared-components/lists.apx`.
 6. **Globale Seite (Seite 0):** drei Komponenten, Vorlage `apex_toolkit/pages/p00000-global-page.apx`:
    * Region „Offline-Kennung“, Typ *Static Content*, Template *Blank with Attributes*, HTML
-     `<span id="offline-page" hidden></span>`, Server-side Condition *User is Authenticated (not public)*. Nur
-     Seiten mit dieser Kennung speichert der Service Worker; Anmelde- und Fehlerseiten tragen sie nicht.
+     `<span id="offline-page" hidden data-user="&APP_USER."></span>`, Server-side Condition *User is Authenticated
+     (not public)*. Nur Seiten mit dieser Kennung speichert der Service Worker; Anmelde- und Fehlerseiten tragen
+     sie nicht. Den Benutzer speichert er mit und liefert eine gespeicherte Seite nur dem Benutzer aus, der sie
+     geladen hat (Gerät weitergegeben).
    * Region „Offline-Vorrat“, Typ *List*, Liste *Navigation Menu*, Template *Links List*, CSS-Klassen
      `offline-prefetch offline-hidden`, Bedingung wie oben: die Menüseiten für den Offline-Vorrat.
    * Dynamic Action „Offline-Erfassung“: Ereignis *Before Page Submit*, Client-side Condition *JavaScript
@@ -188,7 +191,7 @@ Am Platz des Eintrags „Offline-Status“ der Navigationsleiste steht der Zusta
 Offline-Vorrats. **„Anmeldung nötig“** heißt: die Sitzung ist abgelaufen, die Entwürfe warten; die Liste der
 Entwürfe hat dann den Knopf *Anmelden und übertragen*. In Listen sind Datensätze mit offenem Entwurf markiert
 (●). Ein Klick auf die Anzeige öffnet die Liste der Entwürfe mit *Öffnen*, *Verwerfen* und *Jetzt übertragen*;
-Foto-Entwürfe zeigen ein Vorschaubild. Jeder Entwurf heißt wie die Seite plus ihr erster ausgefüllter Wert,
+Foto-Entwürfe zeigen ein kleines Vorschaubild (beim Speichern erzeugt, einige KB – die Liste lädt nie die Fotos selbst). Jeder Entwurf heißt wie die Seite plus ihr erster ausgefüllter Wert,
 z. B. „Auftrag: A-1005" – das kennzeichnende Feld gehört also nach oben. Neuanlagen erscheinen außerdem dort,
 wo sie hingehören (Regionen mit `offline-drafts`): ein noch nicht übertragenes Foto am Auftrag, ein offline
 angelegter Auftrag in der Liste. Bilder, die offline nicht verfügbar sind, zeigen „Bild nur online“ statt eines
@@ -299,8 +302,9 @@ darstellen kann.
   online deshalb mit der Anmeldung, offline mit der gespeicherten Startseite.
 * Auf iPhone/iPad bleiben die Daten nur dauerhaft erhalten, wenn die App zum Home-Bildschirm hinzugefügt
   wurde.
-* Gespeicherte Seiten enthalten die Daten, die der Anwender gesehen hat. Meldet sich auf dem Gerät ein
-  anderer Benutzer an, werden sie gelöscht; Entwürfe sieht und überträgt nur ihr Ersteller.
+* Gespeicherte Seiten enthalten die Daten, die der Anwender gesehen hat. Der Service Worker liefert sie nur dem
+  Benutzer aus, der sie geladen hat; meldet sich auf dem Gerät ein anderer Benutzer an, werden sie gelöscht.
+  Entwürfe sieht und überträgt nur ihr Ersteller.
 * Die installierte App startet offline ohne Anmeldung und zeigt die gespeicherten Seiten – sonst wäre sie
   offline nicht nutzbar. Abmelden löscht bewusst nichts. Schutz der Daten auf dem Gerät ist die
   Gerätesperre (PIN, Face ID) und die Geräteverwaltung, nicht die App.
@@ -401,9 +405,11 @@ Was danach auf den Geräten passiert:
   ergänzt und speichert – es geht nichts still verloren.
 * Deshalb Felder auf Erfassungsseiten nicht umbenennen oder löschen, solange Geräte noch offline
   Erfasstes haben; bei größeren Umbauten vorher übertragen lassen.
-* Alte Dateiversionen bleiben im Browser (je Release rund 1–2 MB mit Barcode-Decoder), Dateien von APEX
-  selbst in einem eigenen Cache je APEX-Version. Aufräumen lässt sich das über „Websitedaten löschen" im
-  Browser – vorher alles übertragen.
+* Skripte, Styles und Dateien liegen in einem Cache je APEX-Version; der Service Worker behält den der aktuellen
+  und den der vorigen APEX-Version (gespeicherte Seiten eines früheren Release verweisen noch darauf) und
+  entfernt ältere beim Aktivieren. Innerhalb einer APEX-Version bleiben alte Fassungen der App-Dateien (je
+  Release rund 1–2 MB mit Barcode-Decoder); gespeicherte Seiten sind auf 500 begrenzt. Ganz aufräumen lässt
+  sich das über „Websitedaten löschen" im Browser – vorher alles übertragen.
 
 ## Vertrag: woran die Schicht in APEX hängt
 
@@ -422,7 +428,7 @@ gehören in diese Liste oder werden nicht gebaut.
 | `apex.util.escapeHTML/showSpinner`, `apex.jQuery`, Ereignisse `apexreadyend`, `apexpagesubmit` | JavaScript-API | Ausgabe, Warteanzeige, Start, Selbstprüfung |
 | Dynamic Action *Before Page Submit* mit *Cancel Event*, `this.data` = Request | Builder; Doku von `apexbeforepagesubmit` | Speichern übernehmen |
 | Service-Worker-Hooks `EVENT_INSTALL`, `EVENT_ACTIVATE`, `EVENT_FETCH` | Builder (PWA); APEX PWA Reference | Seiten und Dateien speichern |
-| Regionen *Static Content*, *List*, *Dynamic Content*, `apex_page.get_url`, Globale Seite, Listeneintrag der Navigationsleiste, Page-CSS-Klassen am `body` | Builder, PL/SQL-API | Seitenkennung, Vorrat, Links mit Prüfsumme, Platz der Anzeige, Seitenkennzeichen |
+| Regionen *Static Content* (mit Substitution `&APP_USER.`), *List*, *Dynamic Content*, `apex_page.get_url`, Globale Seite, Listeneintrag der Navigationsleiste, Page-CSS-Klassen am `body` | Builder, PL/SQL-API | Seitenkennung mit Benutzer, Vorrat, Links mit Prüfsumme, Platz der Anzeige, Seitenkennzeichen |
 | Friendly URLs, nur dokumentierte Parameter (`session cs dialogCs clear debug trace timezone request lang territory printerFriendly x01`) | Doku | Schlüssel gespeicherter Seiten und Entwürfe |
 | Prüfsumme *Checksum Required – User Level*, Deep Linking | Builder (Session State Protection) | Entwürfe überstehen eine neue Anmeldung |
 | Session State Data Type *CLOB* | Builder | Unterschrift und Foto als Data-URL |

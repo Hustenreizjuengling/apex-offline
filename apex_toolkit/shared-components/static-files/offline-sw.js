@@ -16,6 +16,10 @@ const PAGES = "offline-pages:" + SCOPE.pathname;                          // gle
 const FILES = "offline-files:" + SCOPE.pathname;                          // gleicher Name in offline.js
 const CONFIG = SCOPE.href + "offline-config";                            // Pfade der statischen Dateien (schreibt offline.js)
 const PROBE = SCOPE.href + "offline-probe";                              // Selbstprüfung: beantwortet nur dieser Hook
+const USER_KEY = SCOPE.href + "offline-user";                            // zuletzt angemeldeter Benutzer (aus der Seitenkennung)
+const USER = /id="offline-page"[^>]*\bdata-user="([^"]*)"/i;              // Seitenkennung mit Benutzer (Region auf Seite 0)
+const POST_PATIENCE = 60000;   // nach einem Absenden (POST) ist der Server da: so lange geduldig warten wie im Rahmen
+let lastPost = 0;
 // Dokumentierte Parameter der Friendly URLs, die nichts am Inhalt ändern; gleiche Liste in offline.js
 const VOLATILE = ["session", "cs", "dialogcs", "clear", "debug", "trace", "timezone"];
 const PAGE_LIMIT = 500;   // gespeicherte Seiten höchstens; die am längsten nicht gespeicherten fallen zuerst heraus
@@ -71,19 +75,27 @@ async function remember(key, response) {
     if (!response.ok || response.type !== "basic") { return; }
     const html = await response.text();          // nur angemeldete Seiten der App: keine Anmelde-, Fehler- oder Zeitzonenseite
     if (!html.includes(MARK)) { return; }
+    const user = (html.match(USER) || [])[1] || "";   // wem die Seite gehört; "" bei einer Seitenkennung ohne data-user
     const cache = await caches.open(PAGES);
-    await cache.put(key, new Response(html, { headers: { ...HTML, "x-offline-stored": String(Date.now()) } }));
-    // Obergrenze: put hängt hinten an (Cache API), die ersten Einträge sind also die ältesten
-    if (++puts % 25 === 0) {
-        const keys = await cache.keys();
-        await Promise.all(keys.slice(0, Math.max(0, keys.length - PAGE_LIMIT)).map(k => cache.delete(k)));
-    }
+    await cache.put(key, new Response(html, { headers: { ...HTML, "x-offline-stored": String(Date.now()), "x-offline-user": user } }));
+    if (user) { await (await caches.open(FILES)).put(USER_KEY, new Response(user)); }
+    if (++puts === 1 || puts % 25 === 0) { await trim(cache); }   // auch kurzlebige Service Worker räumen auf
 }
 let puts = 0;                                     // gespeicherte Seiten seit dem Start des Service Workers
+
+async function trim(cache) {                      // Obergrenze: put hängt hinten an (Cache API), die ersten Einträge sind die ältesten
+    const keys = await cache.keys();
+    await Promise.all(keys.slice(0, Math.max(0, keys.length - PAGE_LIMIT)).map(k => cache.delete(k)));
+}
+
+const lastUser = () => caches.open(FILES).then(c => c.match(USER_KEY)).then(r => (r ? r.text() : "")).catch(() => "");
 
 async function fromCache(key) {
     const hit = await caches.match(key, { cacheName: PAGES });
     if (!hit) { return null; }
+    // Seite eines anderen Benutzers (Gerät weitergegeben, Vorgänger noch nicht ausgeräumt): nie ausliefern
+    const user = hit.headers.get("x-offline-user") || "";
+    if (user && user !== await lastUser()) { return null; }
     // Markierung für offline.js: Sitzung und Prüfsummen dieser Fassung sind veraltet; content = gespeichert um
     const stored = hit.headers.get("x-offline-stored") || "";
     const text = await hit.text();
@@ -101,7 +113,10 @@ function page(event) {
     // Vorrat: nur frisch vom Server - nie eine alte Fassung oder die Seite "Keine Verbindung" als geladen melden
     if (request.headers.has("x-offline-prefetch")) { event.respondWith(network); return; }
     event.respondWith((async () => {
-        const response = await race(network, request.destination === "iframe" ? PATIENT : TIMEOUT);
+        // Rahmen (Übertragung, Dialoge) und die Seiten nach einem Absenden warten länger: der Server ist erreichbar,
+        // eine gespeicherte Fassung wäre jetzt die falsche (alter Stand, oder die Seite des vorigen Benutzers)
+        const patient = request.destination === "iframe" || Date.now() - lastPost < POST_PATIENCE;
+        const response = await race(network, patient ? PATIENT : TIMEOUT);
         if (response && response.status < 500) { return response; }
         return (await fromCache(key)) || response
             || network.catch(() => new Response(OFFLINE_PAGE, { headers: HTML }));
@@ -143,9 +158,22 @@ async function resource(event) {
     return fetch(request).catch(async () => (await caches.match(request)) || Response.error());
 }
 
+// Dateien je APEX-Version: der Cache der aktuellen Version und der davor bleiben (gespeicherte Seiten eines früheren
+// Release verweisen noch auf ihre Dateien), ältere werden beim Aktivieren eines neuen Service Workers entfernt.
+async function pruneFiles() {
+    const prefix = FILES + ":";
+    const num = v => v.split(".").map(n => parseInt(n, 10) || 0);
+    const newer = (a, b) => { const x = num(a), y = num(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((y[i] || 0) !== (x[i] || 0)) { return (y[i] || 0) - (x[i] || 0); } } return 0; };
+    const versions = (await caches.keys()).filter(n => n.startsWith(prefix)).map(n => n.slice(prefix.length)).sort(newer);
+    await Promise.all(versions.slice(2).map(v => caches.delete(prefix + v)));
+}
+
 function onFetch(event) {
     const request = event.request;
-    if (request.method !== "GET") { return; }                         // Absenden, Ajax, HEAD: direkt ins Netz
+    if (request.method !== "GET") {                                   // Absenden, Ajax, HEAD: direkt ins Netz
+        if (request.method === "POST" && new URL(request.url).origin === SCOPE.origin) { lastPost = Date.now(); }
+        return;
+    }
     if (request.url === PROBE) { event.respondWith(new Response("ok", { headers: { "x-offline-sw": "1" } })); return; }
     if (request.mode === "navigate" || request.headers.has("x-offline-prefetch")) { page(event); return; }
     if (new URL(request.url).origin !== SCOPE.origin) { return; }       // fremde Server: Browser-Standard
@@ -154,6 +182,7 @@ function onFetch(event) {
 
 const swHooks = {
     EVENT_INSTALL: ({ event }) => event.waitUntil(self.skipWaiting()),
-    EVENT_ACTIVATE: ({ event }) => event.waitUntil(self.clients.claim()),
+    EVENT_ACTIVATE: ({ event }) => event.waitUntil(Promise.all([self.clients.claim(),
+        caches.open(PAGES).then(trim).catch(() => {}), pruneFiles().catch(() => {})])),
     EVENT_FETCH: ({ event }) => onFetch(event)
 };
