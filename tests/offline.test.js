@@ -97,29 +97,8 @@ async function serverValues(page, nr) {             // Werte so, wie das Protoko
         };
     });
 }
-// Vertrag (README): die Offline-Schicht nutzt nur diese dokumentierte APEX-API und liest nie APEX- oder
-// Theme-Markup. Geprüft wird der Quelltext von offline.js, offline-sw.js und offline.css (ohne Kommentare).
-const CONTRACT = ["apex.env", "apex.items", "apex.item", "apex.jQuery", "apex.page.submit", "apex.page.validate",
-    "apex.page.isChanged", "apex.page.cancelWarnOnUnsavedChanges", "apex.message.showPageSuccess", "apex.message.hidePageSuccess",
-    "apex.message.showErrors", "apex.message.clearErrors", "apex.message.alert", "apex.message.confirm",
-    "apex.message.setThemeHooks", "apex.message.TYPE", "apex.util.escapeHTML", "apex.util.showSpinner"];
-function contractLint() {
-    const fs = require("fs"), path = require("path");
-    const dir = path.join(__dirname, "..", "apex_toolkit", "shared-components", "static-files");
-    const read = f => fs.readFileSync(path.join(dir, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-    const code = ["offline.js", "offline-sw.js"].map(f => read(f).replace(/(^|[^:"'\\])\/\/.*$/gm, "$1")).join("\n");
-    const problems = [];
-    for (const [full] of code.matchAll(/\bapex\.[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g)) {
-        if (!CONTRACT.some(c => full === c || full.startsWith(c + "."))) { problems.push(full); }
-    }
-    const markup = /(querySelector(?:All)?|closest|matches|getElementById)\(\s*["'`][^"'`]*(\.t-|#t_|\.ui-|#APEX_|#?main["'`]|wwv)/g;
-    for (const [bad] of code.matchAll(markup)) { problems.push(bad); }
-    for (const [bad] of code.matchAll(/wwv_flow|gCancelFlag|forEachPageItem|pReloadOnSubmit|apex\.sw\b|apex_dialog_|classList\.contains\(["']t-/g)) { problems.push(bad); }
-    for (const [, sel] of read("offline.css").matchAll(/([^{}]+)\{/g)) {
-        if (/(\.t-|#t_|\.ui-|#APEX_|#main\b)/.test(sel)) { problems.push("offline.css: " + sel.trim()); }
-    }
-    return [...new Set(problems)];
-}
+// Vertrag (README): nur dokumentierte APEX-API, kein APEX- oder Theme-Markup - geprüft am Quelltext (tests/contract.js)
+const { contractLint, versionLint } = require("./contract");
 
 const bytesOf = (page, src) => page.evaluate(async url => (await (await fetch(url)).arrayBuffer()).byteLength, src);
 const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValue().split(",")[1]).length);
@@ -143,6 +122,8 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         console.log("0. Vertrag: nur dokumentierte APEX-API, keine APEX- oder Theme-Interna (README: Vertrag)");
         const lint = contractLint();
         check(lint.length === 0, "Quelltext hält den Vertrag" + (lint.length ? " – verletzt: " + lint.join(" | ") : ""));
+        const versions = versionLint();
+        check(versions.length === 0, "Versionsnummer in application.apx und CHANGELOG stimmen überein" + (versions.length ? " – " + versions.join(" | ") : ""));
         await login(page);                                          // erster Aufruf überhaupt, nichts weiter öffnen
         const live = await page.evaluate(async () => {
             const missing = [];
@@ -171,7 +152,10 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(complete(cached), `Vorrat ohne einen Klick: Liste, Anlegeseite, je ${orders} Aufträge, Protokolle und Foto-Seiten (`
             + cached.filter(u => u.startsWith(URL_)).length + " Seiten)");
         await page.locator(".offline-status").click();
-        const stockLine = await page.locator(".offline-panel .offline-stock").innerText();
+        const stockLine = await page.locator(".offline-panel .offline-stock").innerText();   // genau eine Zeile: der Versionshinweis hat eine eigene Klasse
+        const versionHint = await page.locator(".offline-panel .offline-version").count();
+        const tested = await page.evaluate(() => apex.env.APEX_BASE_VERSION);
+        check(versionHint === 0, "APEX " + tested + " ist als geprüft eingetragen (kein Versionshinweis in der Liste der Entwürfe)");
         await page.locator(".offline-panel [data-act=close]").click();
         check(!/unvollständig/.test(await pill(page)) && /vollständig geladen/.test(stockLine), "Vorrat als vollständig gemeldet: " + stockLine);
         check(blobRequests.length === 0, "Vorrat lädt keine Bilder vom Server" + (blobRequests.length ? ": " + blobRequests.length : ""));
@@ -517,6 +501,30 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         await page.evaluate(() => window.dispatchEvent(new Event("online"))).catch(() => {});
         await waitFor(async () => await report().isVisible().catch(() => false) && !IS_COPY_PAGE(await page.content()), 20000, "Seite neu geladen");
         check(await notice().isHidden(), "wieder online: aktuelle Auswertung ohne Hinweis");
+
+        console.log("12b. Verbindung weg, während eine Erreichbarkeitsprüfung unterwegs ist: die verspätete Antwort zählt nicht");
+        const raceCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });
+        const racer = await raceCtx.newPage();
+        racer.on("pageerror", e => errors.push(e.message));
+        await login(racer);
+        await waitFor(async () => (await pill(racer)).trim() === "Online", 60000, "Vorrat geladen");
+        await racer.addInitScript(() => {                           // HEAD-Antworten erreichen das Skript 2 s verspätet
+            const f = window.fetch;
+            window.fetch = (input, init) => (init && init.method === "HEAD")
+                ? f(input, init).then(r => { window.oeHeadArrived = true; return new Promise(res => setTimeout(() => res(r), 2000)); })
+                : f(input, init);
+        });
+        await racer.goto(URL_ + "/auswertung?session=" + await sessionOf(racer));
+        await racer.waitForSelector(".offline-status");
+        await racer.waitForFunction(() => window.oeHeadArrived === true, null, { timeout: 20000 });   // Antwort da, Skript sieht sie erst später
+        await raceCtx.setOffline(true);
+        await racer.evaluate(() => window.dispatchEvent(new Event("offline")));
+        await waitFor(async () => /^Offline/.test(await pill(racer)), 5000, "Anzeige Offline");
+        await racer.waitForTimeout(3500);                           // die verspätete "online"-Antwort ist jetzt angekommen
+        const raced = await racer.evaluate(() => ({ pill: document.querySelector(".offline-status").textContent,
+            mode: document.documentElement.classList.contains("offline-mode"), notice: getComputedStyle(document.querySelector(".online-only-notice")).display }));
+        check(/^Offline/.test(raced.pill) && raced.mode && raced.notice === "block", "Anzeige bleibt „" + raced.pill + "“, Hinweis bleibt sichtbar");
+        await raceCtx.close();
 
         console.log("13. Online gespeichert, danach offline geöffnet: die gespeicherte Fassung zeigt den neuen Stand");
         await gotoList(page);

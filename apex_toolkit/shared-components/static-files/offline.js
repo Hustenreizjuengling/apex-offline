@@ -84,7 +84,7 @@
 
     // Vertrag: die APEX-API, auf die sich diese Datei stützt - nur dokumentierte API (README "Vertrag").
     // Fehlt etwas davon, schaltet sich die Offline-Erfassung ab, statt still falsch zu arbeiten.
-    const TESTED_APEX = "26.1";                   // zuletzt geprüfte APEX-Version (README "Vertrag", Routine je Update)
+    const TESTED_APEX = ["26.1", "26.2"];         // geprüfte APEX-Versionen (README "Vertrag", Routine je Update)
     const CONTRACT = ["apex.env.APP_ID", "apex.env.APP_PAGE_ID", "apex.env.APP_SESSION", "apex.env.APP_USER",
         "apex.env.APP_FILES", "apex.env.APEX_FILES", "apex.items", "apex.item", "apex.page.submit", "apex.page.validate",
         "apex.page.isChanged", "apex.page.cancelWarnOnUnsavedChanges", "apex.message.showPageSuccess",
@@ -567,7 +567,9 @@
 
     /* ---------- Erreichbarkeit: navigator.onLine erkennt keinen VPN-Ausfall, daher kurz nachfragen ---------- */
 
+    let checks = 0;                               // gestartete Prüfungen: nur die neueste entscheidet
     async function check() {
+        const mine = ++checks;
         let ok = navigator.onLine;
         if (ok) {
             try {               // HEAD geht am Service Worker vorbei; ab 500 antwortet ORDS, aber nicht die Datenbank
@@ -579,6 +581,9 @@
                 ok = false;
             }
         }
+        // Inzwischen neu geprüft (z. B. Verbindung weg, während diese Antwort unterwegs war): deren Ergebnis gilt,
+        // sonst setzte eine verspätete Antwort die Anzeige zurück auf "Online"
+        if (mine !== checks) { return online; }
         if (ok !== online) {
             online = ok;
             refresh();
@@ -634,8 +639,8 @@
         dialog.className = "offline-panel";
         dialog.innerHTML = "<h2>Offline erfasst</h2>"
             + (swBroken ? `<p class="offline-login">Seitenspeicher gestört: ${esc(swBroken)}. Neue Seiten werden nicht für offline gespeichert.</p>` : "")
-            + (env.APEX_BASE_VERSION && env.APEX_BASE_VERSION !== TESTED_APEX
-                ? `<p class="offline-stock">APEX ${esc(env.APEX_BASE_VERSION)}, zuletzt geprüft mit ${TESTED_APEX}: Release Notes gegen den Vertrag im README halten.</p>` : "")
+            + (env.APEX_BASE_VERSION && !TESTED_APEX.includes(env.APEX_BASE_VERSION)
+                ? `<p class="offline-version">APEX ${esc(env.APEX_BASE_VERSION)}, zuletzt geprüft mit ${TESTED_APEX[TESTED_APEX.length - 1]}: Release Notes gegen den Vertrag im README halten.</p>` : "")
             + `<p class="offline-stock">Offline verfügbar: ${stored} Seiten`
             + (stockState && stockState.at ? `, vollständig geladen ${when(stockState.at)}` : "")
             + (stockState && stockState.dropped ? `, ${stockState.dropped} nicht abrufbar` : "")

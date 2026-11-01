@@ -440,9 +440,9 @@ bei (nur Links); Fehler aus PL/SQL-Validierungen erscheinen oben auf der Seite s
 
 1. In den Release Notes „Deprecated Features“ und „Changed Behavior“ gegen diese Tabelle lesen.
 2. Die App einmal öffnen: Die Anzeige zeigt kein „Offline gestört“; die Liste der Entwürfe nennt die neue
-   APEX-Version, bis `TESTED_APEX` in `offline.js` nachgezogen ist.
+   APEX-Version, bis sie in `TESTED_APEX` in `offline.js` eingetragen ist (geprüft: 26.1, 26.2).
 3. `npm test` bleibt das Werkzeug für eigene Änderungen und für eine Testinstanz – Voraussetzung für den
-   Betrieb ist er nicht.
+   Betrieb ist er nicht. `npm run lint` prüft ohne Instanz Vertrag und Syntax.
 
 ## Beispiel-App installieren
 
@@ -484,11 +484,13 @@ nur für online, Online-Speichern über den Rahmen (Ablehnung, wieder geöffnete
 ```text
 npm install                                  # einmalig: Playwright
 npx playwright install chromium              # einmalig, falls Chromium noch fehlt
+npm run lint                                 # ohne Instanz: Vertrag, Syntax, Versionsnummer (läuft auch als GitHub Action)
 OE_URL=https://<server>/ords/r/<workspace>/erfassung OE_USER=<benutzer> OE_PASSWORD=<kennwort> npm test
 ```
 
 Der Test legt zwei Testaufträge mit Fotos an (Kennung `T…`) und löscht sie am Ende wieder; die fünf
-Beispielaufträge ändert er.
+Beispielaufträge ändert er. Er dauert etwa sechs Minuten. Was sich je Version geändert hat, steht in
+[CHANGELOG.md](CHANGELOG.md).
 
 `tests/smoke_test.sql` prüft die Datenbankobjekte (Fotos dekodieren, Fehlermeldungen, doppelt gesendet) und
 ändert nichts: `sql -S -name <verbindung> @tests/smoke_test.sql` aus dem Projektordner.
