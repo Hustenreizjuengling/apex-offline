@@ -3,6 +3,26 @@
 Versionsnummer wie im README „Release und Update“: Fehlerkorrektur erhöht die dritte Stelle (1.14.1), neues
 Verhalten die zweite (1.15.0). Die Version steht in `apex_toolkit/application.apx` und in der Fußzeile der App.
 
+## 1.15.1 – 2026-11-01
+
+Fehlerkorrekturen zu 1.15.0 (Befunde eines zweiten Reviews).
+
+- **Upgrade der Browser-Datenbank** bei noch offener älterer Registerkarte: Bisher galt das Warten als Fehler
+  („Offline gestört“). Jetzt wartet die neue Fassung; die ältere Registerkarte gibt die Verbindung frei und meldet
+  „Neue Fassung in einer anderen Registerkarte – Seite neu laden“. Ein Rückbau auf eine Fassung vor 1.15.0 zeigt
+  auf Geräten mit der neuen Datenbank „Offline gestört“, bis die Websitedaten gelöscht sind (README, Release).
+- **Benutzernamen außerhalb Latin-1** (ł, kyrillisch, CJK) machten den Header `x-offline-user` ungültig; der
+  Service Worker speicherte dann keine Seiten mehr, ohne Hinweis. Der Name wird kodiert abgelegt.
+- **Geduld nach dem Absenden** nur noch nach einem gelungenen POST (Antwort ok); ein fehlgeschlagener zählte mit und
+  ließ die nächste Seite auf einer halbtoten Verbindung 30 statt 4 s warten.
+- Eine **überholte Erreichbarkeitsprüfung** liefert ihren Aufrufern das Ergebnis der neuesten Prüfung statt des
+  alten Zustands (der Vorrat zählte sonst eine Seite als „nicht abrufbar“, obwohl die Verbindung weg war).
+- **Sende-Sperre:** Der Status „sendet“ entsteht nur noch unter der Sperre, auch beim Online-Speichern; bisher
+  stand er für Mikrosekunden ohne Sperre im Speicher, ein zweites Fenster hätte den Entwurf als abgebrochen
+  eingestuft.
+- Testaufträge werden auch nach einem abgebrochenen Testlauf entfernt; neuer Testschritt 12d (Übernahme der
+  Entwürfe aus der Datenbank der Version 1).
+
 ## 1.15.0 – 2026-11-01
 
 Neues Verhalten; in eigenen Apps die Region „Offline-Kennung“ auf Seite 0 nachziehen (siehe README, Schritt 6).

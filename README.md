@@ -405,6 +405,9 @@ Was danach auf den Geräten passiert:
   ergänzt und speichert – es geht nichts still verloren.
 * Deshalb Felder auf Erfassungsseiten nicht umbenennen oder löschen, solange Geräte noch offline
   Erfasstes haben; bei größeren Umbauten vorher übertragen lassen.
+* Ab 1.15.0 hat die Browser-Datenbank der Entwürfe Version 2. Ein Rückbau auf eine ältere Fassung zeigt auf
+  Geräten, die 1.15.0 schon geladen hatten, „Offline gestört“ (Browser-Speicher nicht nutzbar: VersionError),
+  bis die Websitedaten gelöscht sind – vorher alles übertragen.
 * Skripte, Styles und Dateien liegen in einem Cache je APEX-Version; der Service Worker behält den der aktuellen
   und den der vorigen APEX-Version (gespeicherte Seiten eines früheren Release verweisen noch darauf) und
   entfernt ältere beim Aktivieren. Innerhalb einer APEX-Version bleiben alte Fassungen der App-Dateien (je

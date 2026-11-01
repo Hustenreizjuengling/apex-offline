@@ -161,10 +161,12 @@
         };
         open.onsuccess = () => {
             open.result.onclose = () => disable("Browser-Speicher wurde geschlossen");   // z. B. iOS: Verbindung weggenommen
+            // Eine neuere Fassung in einer anderen Registerkarte erweitert die Datenbank: Verbindung freigeben, sonst wartete sie
+            open.result.onversionchange = () => { open.result.close(); disable("Neue Fassung in einer anderen Registerkarte – Seite neu laden"); };
             resolve(open.result);
         };
         open.onerror = () => reject(open.error);
-        open.onblocked = () => reject(new Error("IndexedDB blockiert"));
+        // onblocked (eine ältere Registerkarte hält die Datenbank noch offen) ist kein Fehler: onsuccess kommt, sobald sie schließt
     });
     db.catch(() => {});                           // gemeldet wird der Fehler in allDrafts
 
@@ -173,7 +175,7 @@
         const req = fn(tx.objectStore("drafts"), tx.objectStore("meta"));
         return new Promise((resolve, reject) => {
             tx.oncomplete = () => resolve(req.result);
-            tx.onerror = tx.onabort = () => reject(tx.error);
+            tx.onerror = tx.onabort = () => reject(tx.error || new Error("IndexedDB-Transaktion abgebrochen"));
         });
     }
     const allDrafts = () => store("readonly", (s, m) => m.getAll())   // nur der Index: ohne Werte, ohne Fotos
@@ -317,15 +319,18 @@
             return;
         }
         const existed = !!draft;
+        const previous = draft;
         const direct = online && !IS_COPY && !queued();   // online: Ergebnis abwarten wie beim normalen Speichern
-        if (direct) { d.status = "sendet"; d.sentAt = Date.now(); }
         capturing = true;
         const pic = picture(d);
         if (pic) { d.thumb = await thumbnail(pic).catch(() => undefined); }   // kleines Vorschaubild für Index und Listen
+        // "sendet" wird er erst unter der Sende-Sperre (replayIn): ein anderes Fenster sähe sonst "sendet" ohne Sperre
+        draft = d;                                // sync() dieser Seite lässt ihn aus, solange sie ihn sendet
         try {
             await putDraft(d);
         } catch (e) {
             capturing = false;
+            draft = previous;
             if (online && !IS_COPY && !bypassed) {   // Speicher des Browsers nicht nutzbar: APEX sendet selbst
                 bypass = bypassed = true;
                 apex.page.submit({ request });
@@ -334,9 +339,8 @@
             apex.message.alert("Nicht lokal gespeichert (" + (e && e.name) + "). Bitte die Seite offen lassen.");
             return;
         }
-        if (abortCapture) { abortCapture = capturing = false; await deleteDraft(d.id); return; }
+        if (abortCapture) { abortCapture = capturing = false; draft = previous; await deleteDraft(d.id); return; }
         if (navigator.storage && navigator.storage.persist) { navigator.storage.persist(); }
-        draft = d;                                // sync() lässt ihn aus, solange diese Seite ihn sendet
         if (!direct) {
             apex.page.cancelWarnOnUnsavedChanges();
             leave(online && !IS_COPY ? "Gespeichert – wird im Hintergrund übertragen." : "Offline gespeichert – wird automatisch übertragen.");
@@ -609,8 +613,13 @@
     /* ---------- Erreichbarkeit: navigator.onLine erkennt keinen VPN-Ausfall, daher kurz nachfragen ---------- */
 
     let checks = 0;                               // gestartete Prüfungen: nur die neueste entscheidet
-    async function check() {
+    let latestCheck = Promise.resolve(online);    // Ergebnis der neuesten Prüfung, auch für überholte Aufrufer
+    function check() {
         const mine = ++checks;
+        latestCheck = checkNow(mine);
+        return latestCheck;
+    }
+    async function checkNow(mine) {
         let ok = navigator.onLine;
         if (ok) {
             try {               // HEAD geht am Service Worker vorbei; ab 500 antwortet ORDS, aber nicht die Datenbank
@@ -624,7 +633,7 @@
         }
         // Inzwischen neu geprüft (z. B. Verbindung weg, während diese Antwort unterwegs war): deren Ergebnis gilt,
         // sonst setzte eine verspätete Antwort die Anzeige zurück auf "Online"
-        if (mine !== checks) { return online; }
+        if (mine !== checks) { return latestCheck; }
         if (ok !== online) {
             online = ok;
             refresh();

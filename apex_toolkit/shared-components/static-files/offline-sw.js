@@ -75,7 +75,8 @@ async function remember(key, response) {
     if (!response.ok || response.type !== "basic") { return; }
     const html = await response.text();          // nur angemeldete Seiten der App: keine Anmelde-, Fehler- oder Zeitzonenseite
     if (!html.includes(MARK)) { return; }
-    const user = (html.match(USER) || [])[1] || "";   // wem die Seite gehört; "" bei einer Seitenkennung ohne data-user
+    // wem die Seite gehört; "" bei einer Seitenkennung ohne data-user. Kodiert: Header erlauben nur Latin-1 (Namen mit ł, kyrillisch ...)
+    const user = encodeURIComponent((html.match(USER) || [])[1] || "");
     const cache = await caches.open(PAGES);
     await cache.put(key, new Response(html, { headers: { ...HTML, "x-offline-stored": String(Date.now()), "x-offline-user": user } }));
     if (user) { await (await caches.open(FILES)).put(USER_KEY, new Response(user)); }
@@ -170,8 +171,12 @@ async function pruneFiles() {
 
 function onFetch(event) {
     const request = event.request;
-    if (request.method !== "GET") {                                   // Absenden, Ajax, HEAD: direkt ins Netz
-        if (request.method === "POST" && new URL(request.url).origin === SCOPE.origin) { lastPost = Date.now(); }
+    if (request.method !== "GET") {                                   // Absenden, Ajax, HEAD: ins Netz
+        // Ein gelungenes Absenden (POST, Antwort ok) merken: der Server ist erreichbar, siehe page(). Ein fehlgeschlagener
+        // POST zählt nicht - sonst wartete die nächste Seite auf einer halbtoten Verbindung 30 s statt 4 s.
+        if (request.method === "POST" && new URL(request.url).origin === SCOPE.origin) {
+            event.respondWith(fetch(request).then(r => { if (r.ok) { lastPost = Date.now(); } return r; }));
+        }
         return;
     }
     if (request.url === PROBE) { event.respondWith(new Response("ok", { headers: { "x-offline-sw": "1" } })); return; }

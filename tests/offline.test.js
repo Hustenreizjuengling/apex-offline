@@ -532,6 +532,38 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         check(/^Offline/.test(raced.pill) && raced.mode && raced.notice === "block", "Anzeige bleibt „" + raced.pill + "“, Hinweis bleibt sichtbar");
         await raceCtx.close();
 
+        console.log("12d. Entwürfe aus Version 1 (IndexedDB ohne Index) werden beim ersten Start übernommen");
+        const oldCtx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "de-DE" });
+        const old = await oldCtx.newPage();
+        old.on("pageerror", e => errors.push(e.message));
+        await login(old);
+        const oldOrder = await old.evaluate(() => {                  // Adresse von A-1005 mit Prüfsumme, wie ein Entwurf sie trägt
+            const a = [...document.querySelectorAll(".offline-prefetch td a")].find(x => x.textContent.trim() === "A-1005");
+            return { url: new URL(a.href).href, user: apex.env.APP_USER, app: apex.env.APP_ID, session: apex.env.APP_SESSION };
+        });
+        await old.goto(new URL(URL_).origin + "/i/apex_version.txt");   // Seite ohne offline.js: dessen offene Verbindung blockierte das Löschen
+        await old.evaluate(async o => {                              // Datenbank der Version 1 mit einem Entwurf anlegen
+            await new Promise((r, j) => { const q = indexedDB.deleteDatabase("offline-" + o.app); q.onsuccess = () => r(); q.onerror = () => j(q.error); q.onblocked = () => j(new Error("blockiert")); });
+            const db = await new Promise((r, j) => { const q = indexedDB.open("offline-" + o.app, 1); q.onupgradeneeded = () => q.result.createObjectStore("drafts", { keyPath: "id" }); q.onsuccess = () => r(q.result); q.onerror = () => j(q.error); });
+            const url = new URL(o.url);
+            ["session", "cs", "dialogcs", "clear", "debug", "trace", "timezone"].forEach(k => url.searchParams.delete(k));
+            url.searchParams.sort();
+            await new Promise(r => { const t = db.transaction("drafts", "readwrite"); t.objectStore("drafts").put({ id: "alt-1", key: url.href, url: o.url, page: "2", user: o.user,
+                title: "Auftrag: A-1005", request: "SAVE", create: false, items: { P2_BEFUND: { old: "", val: "Aus Version 1" } }, ts: Date.now(), status: "fehler", info: "alter Stand", resend: false }); t.oncomplete = r; });
+            db.close();
+        }, oldOrder);
+        await old.goto(URL_ + "/auftraege?session=" + oldOrder.session);   // offline.js öffnet Version 2 und übernimmt den Entwurf in den Index
+        await old.waitForSelector(".offline-status");
+        await waitFor(async () => /1 offen/.test(await pill(old)), 15000, "übernommener Entwurf");
+        await old.locator(".offline-status").click();
+        check(/Auftrag: A-1005[\s\S]*fehler: alter Stand/.test(await old.locator(".offline-panel").innerText()), "Entwurf aus Version 1 in der Liste: " + await pill(old));
+        await Promise.all([old.waitForURL(/auftrag\?/), old.locator(".offline-panel [data-act=open]").click()]);
+        await waitFor(async () => await old.inputValue("#P2_BEFUND") === "Aus Version 1", 10000, "Werte eingesetzt");
+        check(true, "Öffnen setzt die Werte des alten Entwurfs ein");
+        await old.evaluate(async o => { const db = await new Promise(r => { const q = indexedDB.open("offline-" + o.app); q.onsuccess = () => r(q.result); });
+            await new Promise(r => { const t = db.transaction(["drafts", "meta"], "readwrite"); t.objectStore("drafts").delete("alt-1"); t.objectStore("meta").delete("alt-1"); t.oncomplete = r; }); }, oldOrder);
+        await oldCtx.close();
+
         console.log("12c. Gespeicherte Seite eines anderen Benutzers: der Service Worker liefert sie nie aus");
         await gotoList(page);
         await page.waitForSelector(".offline-status");
@@ -719,6 +751,19 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         console.log("           Entwürfe: " + await drafts(page) + " | Seite: " + page.url().replace(URL_, ""));
         await page.screenshot({ path: "tests/.state/abbruch.png", fullPage: true }).catch(() => {});
     } finally {
+        try {                                                        // auch nach einem Abbruch: Testaufträge dieses Laufs entfernen
+            const sweeper = await office.newPage();
+            sweeper.on("dialog", d => d.accept());
+            await login(sweeper);
+            for (let guard = 0; guard < 10; guard++) {
+                await gotoList(sweeper);
+                const link = sweeper.locator("td a", { hasText: RUN }).first();
+                if (!await link.count()) { break; }
+                await Promise.all([sweeper.waitForURL(/auftrag\?/), link.click()]);
+                await sweeper.getByRole("button", { name: "Löschen", exact: true }).click();
+                await Promise.all([sweeper.waitForURL(/auftraege/), sweeper.locator(".ui-dialog").getByRole("button", { name: "Löschen", exact: true }).click()]);
+            }
+        } catch (e) { console.log("           Aufräumen nicht möglich: " + e.message); }
         await browser.close();
     }
     console.log(failed ? `\n${failed} Prüfung(en) fehlgeschlagen.` : "\nAlle Prüfungen bestanden.");
