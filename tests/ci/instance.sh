@@ -27,7 +27,6 @@ wait
 docker run -d --name oracle-free -p 1521:1521 -e ORACLE_PASSWORD="$PW" -e TZ=Europe/Berlin "$IMAGE" >/dev/null
 unzip -q apex.zip && mkdir -p ords && unzip -q ords.zip -d ords && unzip -q sqlcl.zip
 rm -f apex.zip ords.zip sqlcl.zip
-rm -rf apex/builder                              # Sprachpakete werden nicht gebraucht (Platz)
 echo "APEX $(cat apex/images/apex_version.txt 2>/dev/null || echo '?'), $(ords/bin/ords --version 2>/dev/null | tail -1), SQLcl $($SQL -V 2>/dev/null | tail -1)"
 
 say "Datenbank startet"
@@ -38,6 +37,7 @@ say "APEX installieren (etwa 10 Minuten)"
 cd "$WORK/apex"
 echo "@apexins.sql SYSAUX SYSAUX TEMP /i/" | $SQL "$SYS" > "$WORK/logs/apexins.log" 2>&1 || true
 grep -q "Thank you for installing Oracle APEX" "$WORK/logs/apexins.log" || { tail -60 "$WORK/logs/apexins.log"; echo "APEX-Installation fehlgeschlagen"; exit 1; }
+rm -rf "$WORK/apex/builder"                      # erst jetzt: apexins.sql braucht die Dateien (Meldungen, Builder); danach nur Platz
 echo "@apex_rest_config_core.sql ./ $PW" | $SQL "$SYS" > "$WORK/logs/apex_rest_config.log" 2>&1 || true
 $SQL "$SYS" > "$WORK/logs/workspace.log" 2>&1 <<SQLEOF
 whenever sqlerror exit failure
