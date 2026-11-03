@@ -3,6 +3,22 @@
 Versionsnummer wie im README „Release und Update“: Fehlerkorrektur erhöht die dritte Stelle (1.14.1), neues
 Verhalten die zweite (1.15.0). Die Version steht in `apex_toolkit/application.apx` und in der Fußzeile der App.
 
+## 1.17.0 – 2026-11-02
+
+Neues Verhalten: Lesebestand (Regionen mit `offline-index`) und Pipeline-Versand. Die Browser-Datenbank bekommt
+Version 3 (Rückbau siehe README „Release und Update“).
+
+- **Offline suchen und filtern (Lesebestand):** Regionen mit der neuen CSS-Klasse `offline-index` werden als Text in
+  IndexedDB abgelegt – Zeilen eines Berichts mit ihrem Link, Beschriftungen und Werte eines Formulars – beim
+  Online-Aufruf, im Offline-Vorrat (aus dem HTML, das er ohnehin lädt) und nach jeder Übertragung. Die Liste der
+  Entwürfe bekommt „Im Vorrat suchen“ (alle Wörter müssen vorkommen, Treffer führen auf die gespeicherte Seite),
+  Tabellen ein Filterfeld. Kein Server-API, keine Bilder, Kennwörter oder Data-URLs; „Vorrat neu laden“ baut den
+  Bestand neu auf, ein anderer Benutzer löscht ihn. Beispiel-App: Auftragsliste und Auftragsformular. Testschritt 15.
+- **Pipeline-Versand:** Bei mehreren wartenden Entwürfen lädt die Übertragung die Seite des nächsten Entwurfs
+  schon in einem zweiten unsichtbaren Rahmen, während der aktuelle absendet. Massentest (35 Entwürfe): 45 s
+  statt 56 s, 1,3 statt 1,6 s je Entwurf – mehr nicht, weil APEX die Anfragen einer Sitzung nacheinander
+  bearbeitet; der Heap der Seite bleibt bei gut 200 MB.
+
 ## 1.16.0 – 2026-11-02
 
 Neues Verhalten: vorübergehende Serverfehler werden automatisch wiederholt; in eigenen Apps optional `data-retry` an

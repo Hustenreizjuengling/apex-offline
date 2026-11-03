@@ -114,9 +114,10 @@ async function sweep(context, run) {
         await gotoList(sweeper);
         const link = sweeper.locator("td a", { hasText: run }).first();
         if (!await link.count()) { break; }
-        await Promise.all([sweeper.waitForURL(/auftrag\?/), link.click()]);
-        await sweeper.getByRole("button", { name: "Löschen", exact: true }).click();
-        await Promise.all([sweeper.waitForURL(/auftraege/), sweeper.locator(".ui-dialog").getByRole("button", { name: "Löschen", exact: true }).click()]);
+        // Ein Auftrag mit vielen Fotos (Massentest) lädt und löscht langsam: länger warten als die Standard-30 s
+        await Promise.all([sweeper.waitForURL(/auftrag\?/, { timeout: 120000 }), link.click()]);
+        await sweeper.getByRole("button", { name: "Löschen", exact: true }).click({ timeout: 120000 });
+        await Promise.all([sweeper.waitForURL(/auftraege/, { timeout: 120000 }), sweeper.locator(".ui-dialog").getByRole("button", { name: "Löschen", exact: true }).click()]);
     }
     await sweeper.close();
 }

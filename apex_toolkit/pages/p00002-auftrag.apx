@@ -21,6 +21,7 @@ page 2 (
         formAutoComplete: false
     }
 
+    // offline-index: Beschriftungen und Werte des Formulars sind offline durchsuchbar (Liste der Entwuerfe, "Im Vorrat suchen")
     region auftrag (
         name: Auftrag
         type: form
@@ -35,6 +36,7 @@ page 2 (
         appearance {
             template: @/standard
             templateOptions: #DEFAULT#
+            cssClasses: offline-index
         }
         edit {
             enabled: true

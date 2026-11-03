@@ -50,6 +50,16 @@ a.offline-pending::after { content: "\25CF"; color: #a15c00; margin-left: 4px; f
 .offline-drafts-list small { color: #a15c00; font-weight: 600; }
 .offline-drafts-list .is-fehler, .offline-drafts-list .is-konflikt, .offline-drafts-list .is-unklar { color: #b3261e; }
 
+/* Lesebestand (Region mit offline-index): Filterfeld über der Tabelle, Suche in der Liste der Entwürfe */
+.offline-filter, .offline-search input {
+    display: block; width: 100%; max-width: 24rem; margin: 0 0 8px; padding: 6px 8px;
+    border: 1px solid #888; border-radius: 4px; font: inherit;
+}
+.offline-search label { display: block; font-weight: 600; }
+.offline-search input { margin-top: 4px; max-width: none; }
+.offline-results { max-height: 40vh; overflow: auto; }
+.offline-results small { display: block; color: #555; }
+
 /* Bilder groß ansehen (Region mit offline-lightbox); per Tastatur erreichbar, Fokus sichtbar */
 .offline-lightbox img, .offline-drafts-list img { cursor: zoom-in; }
 img[data-offline-zoom]:focus-visible { outline: 3px solid #1e7d3c; outline-offset: 2px; }

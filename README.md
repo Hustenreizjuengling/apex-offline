@@ -135,6 +135,7 @@ bei zurückkehrender Verbindung neu lädt – so zeigt die Seite nie veraltete Z
 | `offline-prefetch` | Region (z. B. Bericht) → Appearance → CSS Classes | die Ziele ihrer Links gehören zum Offline-Vorrat (siehe unten); Buttons zählen nicht |
 | `offline-drafts` | Region → Appearance → CSS Classes | zeigt oben in der Region die noch nicht übertragenen Neuanlagen der Seiten, auf die ihre Links zeigen – mit Vorschaubild, wenn es ein Foto ist, und Status. Am Auftrag also die Fotos hinter „Foto hinzufügen“, in der Liste die offline angelegten Aufträge. Alles kommt aus dem Gerät, nichts vom Server |
 | `offline-lightbox` | Region → Appearance → CSS Classes | Klick auf ein Bild in der Region zeigt es groß (auch die Vorschaubilder von `offline-drafts`) |
+| `offline-index` | Region → Appearance → CSS Classes | Lesebestand: Zeilen (Bericht) bzw. Beschriftungen und Werte (Formular) der Region sind offline durchsuchbar – Filterfeld über der Tabelle, „Im Vorrat suchen“ in der Liste der Entwürfe, siehe [Offline suchen](#offline-suchen-lesebestand) |
 
 ## Offline-Vorrat: was ohne vorheriges Öffnen offline verfügbar ist
 
@@ -174,6 +175,24 @@ Sie muss ein **Classic Report** oder eine Template Component sein: Cards baut de
 zusammen, der Vorrat findet darin keine Links. Und sie muss alle Zeilen auf einmal zeigen (*Number of Rows*
 mindestens so groß wie der größte Tagesbestand, Standard ist 15): der Vorrat sieht nur angezeigte Zeilen.
 
+## Offline suchen: Lesebestand
+
+Gespeicherte Seiten zeigen offline den Stand, den der Anwender gesehen hat – aber nur Seite für Seite. Regionen
+mit der Klasse **`offline-index`** werden zusätzlich als Text abgelegt (IndexedDB, Speicher „index“): bei einem
+Bericht jede Zeile mit ihrem ersten Link, bei einem Formular jede Beschriftung mit ihrem Wert und die
+Anzeigetexte der Region. Das geschieht beim Online-Aufruf der Seite, für jede Seite des Offline-Vorrats (aus
+dem HTML, das er ohnehin lädt) und nach jeder Übertragung – ohne Server-API, ohne eigene Abfrage, ohne Bilder,
+Kennwörter oder Data-URLs. Die Liste der Entwürfe bekommt damit das Feld **„Im Vorrat suchen“**: alle Wörter
+müssen vorkommen, höchstens 50 Treffer, jeder Treffer führt auf die gespeicherte Seite (offline aus dem Cache).
+Tabellen in solchen Regionen bekommen ein **Filterfeld** über der Tabelle, das Zeilen ausblendet – auch
+offline, auch auf der gespeicherten Fassung.
+
+Beispiel-App: die Auftragsliste (Seite 1) und das Auftragsformular (Seite 2). Offline findet „Klinikum“ den
+Auftrag A-1003 über die Liste, ein Befund-Text den Auftrag über das Formular. Der Lesebestand folgt dem Vorrat:
+„Vorrat neu laden“ baut ihn neu auf, ein anderer Benutzer auf dem Gerät löscht ihn. Er ersetzt keine Datenbank
+im Browser – er durchsucht, was der Vorrat ohnehin geladen hat (bis 300 Seiten je Sitzung), und nur sichtbare
+Zeilen (Berichte ohne Blättern, siehe oben).
+
 ## Seiten im Offline-Vorrat
 
 Der Vorrat ruft jede Seite vollständig auf dem Server auf: *Before Header*-Prozesse, Berechnungen,
@@ -200,7 +219,7 @@ Am Platz des Eintrags „Offline-Status“ der Navigationsleiste steht der Zusta
 Übertragung – die Zahl offener Entwürfe sinkt dabei Entwurf für Entwurf – und **„lädt“** während des
 Offline-Vorrats. **„Anmeldung nötig“** heißt: die Sitzung ist abgelaufen, die Entwürfe warten; die Liste der
 Entwürfe hat dann den Knopf *Anmelden und übertragen*. In Listen sind Datensätze mit offenem Entwurf markiert
-(●). **„Speicher knapp“** heißt: der Browser-Speicher ist zu über 90 % belegt – offene Erfassungen übertragen lassen,
+(●). Die Liste der Entwürfe kann im [Lesebestand](#offline-suchen-lesebestand) suchen, wenn die App Regionen mit `offline-index` hat. **„Speicher knapp“** heißt: der Browser-Speicher ist zu über 90 % belegt – offene Erfassungen übertragen lassen,
 dann wird Platz frei; die Liste der Entwürfe zeigt den Speicherstand. Ist er voll, bleibt eine Offline-Eingabe im
 Formular stehen, mit einem Hinweis, was zu tun ist. Ein Klick auf die Anzeige öffnet die Liste der Entwürfe mit *Öffnen*, *Verwerfen* und *Jetzt übertragen*;
 Foto-Entwürfe zeigen ein kleines Vorschaubild (beim Speichern erzeugt, einige KB – die Liste lädt nie die Fotos selbst). Jeder Entwurf heißt wie die Seite plus ihr erster ausgefüllter Wert,
@@ -299,6 +318,9 @@ darstellen kann.
   Online-Aufrufs bzw. Vorrats (vollständig einmal je Sitzung, also z. B. bei der Anmeldung am Morgen; nach dem
   Online-Speichern einer Erfassungsseite auch deren neuer Stand). Was die Disposition danach an einem schon
   geladenen Datensatz ändert, kommt erst beim Öffnen oder mit „Vorrat neu laden“ aufs Gerät.
+* Offline suchen geht nur im [Lesebestand](#offline-suchen-lesebestand) (Regionen mit `offline-index`, Textsuche
+  über die geladenen Seiten) – keine Berichtssuche, keine Sortierung, keine Abfragen über Daten, die nie geladen
+  wurden.
 * Offline funktionieren Textfelder, Auswahllisten, Optionsfelder, Schalter, Datum, Zahl, Unterschrift, Foto
   und Scan. Übertragene Fotos erscheinen offline ohne Bild („Bild nur online“), das Protokoll nur online. **Nicht** offline: Popup LOV, kaskadierende LOVs, Bearbeiten im Interactive Grid, Datei-Upload,
   serverseitige Dynamic Actions, Regionen mit Lazy Loading.
@@ -309,7 +331,9 @@ darstellen kann.
 * Gegen gleichzeitige Änderungen prüft die Schicht feldweise: zwei Anwender, die verschiedene Felder ändern,
   behalten beide ihre Werte. *Prevent Lost Updates* des Formulars greift nicht, weil die Übertragung den aktuellen
   Stand lädt; dasselbe Feld wird nie still überschrieben (*konflikt*).
-* Online dauert Speichern um einen Seitenaufruf länger: die Übertragung lädt die Seite, bevor sie sendet.
+* Online dauert Speichern um einen Seitenaufruf länger: die Übertragung lädt die Seite, bevor sie sendet. Bei
+  mehreren wartenden Entwürfen lädt die Seite des nächsten schon, während der aktuelle sendet (Pipeline); der
+  Massentest misst das (README „Test“).
 * Anmelden geht nur online. *Rejoin Sessions* wirkt auf der Instanz nicht; die installierte App startet
   online deshalb mit der Anmeldung, offline mit der gespeicherten Startseite.
 * Auf iPhone/iPad bleiben die Daten nur dauerhaft erhalten, wenn die App zum Home-Bildschirm hinzugefügt
@@ -419,9 +443,9 @@ Was danach auf den Geräten passiert:
   ergänzt und speichert – es geht nichts still verloren.
 * Deshalb Felder auf Erfassungsseiten nicht umbenennen oder löschen, solange Geräte noch offline
   Erfasstes haben; bei größeren Umbauten vorher übertragen lassen.
-* Ab 1.15.0 hat die Browser-Datenbank der Entwürfe Version 2. Ein Rückbau auf eine ältere Fassung zeigt auf
-  Geräten, die 1.15.0 schon geladen hatten, „Offline gestört“ (Browser-Speicher nicht nutzbar: VersionError),
-  bis die Websitedaten gelöscht sind – vorher alles übertragen.
+* Ab 1.15.0 hat die Browser-Datenbank der Entwürfe Version 2, ab 1.17.0 Version 3 (Lesebestand). Ein Rückbau auf
+  eine ältere Fassung zeigt auf Geräten, die die neuere schon geladen hatten, „Offline gestört“ (Browser-Speicher
+  nicht nutzbar: VersionError), bis die Websitedaten gelöscht sind – vorher alles übertragen.
 * Skripte, Styles und Dateien liegen in einem Cache je APEX-Version; der Service Worker behält den der aktuellen
   und den der vorigen APEX-Version (gespeicherte Seiten eines früheren Release verweisen noch darauf) und
   entfernt ältere beim Aktivieren. Innerhalb einer APEX-Version bleiben alte Fassungen der App-Dateien (je
@@ -505,8 +529,8 @@ Unterschrift, Prüfung am Item, Neuanlage, automatische Übertragung, Konflikt, 
 neuer Anmeldung, Scannen mit simulierter Kamera ohne Zugriff auf fremde Server, Verwerfen, Foto, Seite
 nur für online, Online-Speichern über den Rahmen (Ablehnung, wieder geöffnete Neuanlage, Verbindungsabbruch),
 voller Browser-Speicher, vorübergehende Serverfehler (503 beim Absenden; gesperrter Auftrag, wenn `OE_SQLCL`
-einen SQLcl-Aufruf als Parsing Schema nennt) und die Barrierefreiheit der eigenen Bedienelemente (axe-core,
-WCAG 2 A/AA, Tastatur).
+einen SQLcl-Aufruf als Parsing Schema nennt), die Barrierefreiheit der eigenen Bedienelemente (axe-core,
+WCAG 2 A/AA, Tastatur) und der Lesebestand (offline filtern und suchen).
 
 ```text
 npm install                                  # einmalig: Playwright
@@ -519,7 +543,8 @@ OE_MASS=30 ... npm run test:mass                                          # Mass
 
 Der Test legt Testaufträge mit Fotos an (Kennung `T…`) und löscht sie am Ende wieder; die fünf
 Beispielaufträge ändert er. Er dauert etwa zehn Minuten. Der Massentest misst Gesamtdauer, Dauer je Entwurf
-(Seite laden / absenden) und den Heap der Seite; Stand 1.16.0: 35 Entwürfe in 56 s, 1,6 s je Entwurf, 190 MB.
+(Seite laden / absenden) und den Heap der Seite; Stand 1.17.0: 35 Entwürfe in 45 s, 1,3 s je Entwurf, gut 200 MB
+(1.16.0 ohne Pipeline: 56 s).
 Gemeinsame Hilfen der Tests liegen in `tests/lib.js`. Was sich je Version geändert hat, steht in
 [CHANGELOG.md](CHANGELOG.md).
 

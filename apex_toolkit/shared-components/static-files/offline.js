@@ -21,6 +21,8 @@
  *        offline-drafts      (Region) zeigt in sich die noch nicht übertragenen Neuanlagen der Seiten, auf die
  *                            ihre Links zeigen - z. B. am Auftrag die Fotos hinter "Foto hinzufügen"
  *        offline-lightbox    (Region) Klick auf ein Bild zeigt es groß
+ *        offline-index       (Region) Zeilen (Tabelle) bzw. Felder (Formular) sind offline durchsuchbar: Filterfeld über
+ *                            der Tabelle, "Im Vorrat suchen" in der Liste der Entwürfe (Lesebestand, 3h)
  *   4. Seiten nur für online (Page > Appearance > CSS Classes: online-only): ohne Verbindung zeigen sie
  *      statt des Inhalts einen Hinweis (offline.css), mit Verbindung wieder den aktuellen Inhalt.
  * Die Seiten selbst speichert offline-sw.js (Service Worker) bei jedem Online-Aufruf.
@@ -170,15 +172,20 @@
 
     const db = new Promise((resolve, reject) => {
         if (!window.indexedDB) { return reject(new Error("IndexedDB fehlt")); }
-        const open = indexedDB.open("offline-" + env.APP_ID, 2);   // kann synchron werfen (gesperrter Speicher): Ablehnung
-        open.onupgradeneeded = e => {             // Version 2 (1.15.0): Index "meta" neben den vollständigen Entwürfen "drafts"
+        const open = indexedDB.open("offline-" + env.APP_ID, 3);   // kann synchron werfen (gesperrter Speicher): Ablehnung
+        open.onupgradeneeded = e => {
             const idb = open.result;
             const drafts = e.oldVersion < 1 ? idb.createObjectStore("drafts", { keyPath: "id" }) : open.transaction.objectStore("drafts");
-            const meta = idb.createObjectStore("meta", { keyPath: "id" });
-            drafts.openCursor().onsuccess = ev => {   // vorhandene Entwürfe in den Index übernehmen (ohne Vorschaubild)
-                const cursor = ev.target.result;
-                if (cursor) { meta.put(light(cursor.value)); cursor.continue(); }
-            };
+            if (e.oldVersion < 2) {               // Version 2 (1.15.0): Index "meta" neben den vollständigen Entwürfen "drafts"
+                const meta = idb.createObjectStore("meta", { keyPath: "id" });
+                drafts.openCursor().onsuccess = ev => {   // vorhandene Entwürfe in den Index übernehmen (ohne Vorschaubild)
+                    const cursor = ev.target.result;
+                    if (cursor) { meta.put(light(cursor.value)); cursor.continue(); }
+                };
+            }
+            if (e.oldVersion < 3) {               // Version 3 (1.17.0): Lesebestand "index" (Regionen mit offline-index)
+                idb.createObjectStore("index", { keyPath: "id" }).createIndex("key", "key");
+            }
         };
         open.onsuccess = () => {
             open.result.onclose = () => disable("Browser-Speicher wurde geschlossen");   // z. B. iOS: Verbindung weggenommen
@@ -423,7 +430,13 @@
         if (afterLeaving) { sessionStorage.setItem("offline-refetch", JSON.stringify(urls)); return; }
         refetchNow(urls);
     }
-    const refetchNow = urls => urls.forEach(u => fetch(liveUrl(new URL(u, document.baseURI).href), { headers: { "x-offline-prefetch": "1" } }).catch(() => {}));
+    const refetchNow = urls => urls.forEach(u => {
+        const href = new URL(u, document.baseURI).href;
+        fetch(liveUrl(href), { headers: { "x-offline-prefetch": "1" } })
+            .then(r => (r.ok ? r.text() : ""))  // der Service Worker speichert die Seite; hier nur noch den Lesebestand erneuern
+            .then(html => { if (html.includes(MARK)) { return indexPage(new DOMParser().parseFromString(html, "text/html"), href); } })
+            .catch(() => {});
+    });
 
     /* ---------- Entwurf beim Öffnen einer Seite wieder einsetzen ---------- */
 
@@ -460,8 +473,9 @@
         syncing = true;
         let sent = 0;
         const run = async () => {
-            for (const { id } of await allDrafts()) {
-                const d = await fullDraft(id);    // frisch lesen: inzwischen verworfen?
+            const list = await allDrafts();
+            for (let i = 0; i < list.length; i++) {
+                const d = await fullDraft(list[i].id);   // frisch lesen: inzwischen verworfen?
                 if (!d) { continue; }
                 if (d.status === "sendet") {      // wird gerade gesendet (anderes Fenster) oder dabei abgebrochen
                     if (await inFlight(d)) { continue; }
@@ -471,6 +485,10 @@
                 if (!due(d) || (draft && d.id === draft.id)) { continue; }
                 transmitting = true;
                 refresh();
+                // Pipeline: die Seite des nächsten fälligen Entwurfs lädt schon, während dieser sendet (spart je Entwurf
+                // etwa die Ladezeit der Seite; der Index kennt Status, Zeitpunkt und Adresse)
+                const next = list.slice(i + 1).find(m => due(m) && !(draft && m.id === draft.id));
+                if (next) { preload(next); }
                 const result = await replay(d, async r => {   // abschließen, solange die Sende-Sperre noch gehalten wird
                     if (r.status === "ok") { await settle(d); }
                     else if (r.status === "fehler" && r.messages) { await settle(d, rejected(d, r)); }
@@ -495,6 +513,7 @@
                 await run();
             }
         } finally {
+            dropPreload();                        // eine vorgeladene Seite, die niemand mehr braucht
             syncing = transmitting = false;
             refresh();
         }
@@ -533,10 +552,30 @@
         ? navigator.locks.request(sendLock(d), async () => then(await replayIn(d)))
         : replayIn(d).then(then));
 
+    let preloaded = null;                         // { id, url, frame, at }: Seite des nächsten Entwurfs, lädt schon
+    function preload(m) {
+        if (preloaded && preloaded.id === m.id) { return; }
+        dropPreload();
+        const frame = document.createElement("iframe");
+        frame.name = "offline-sync";
+        frame.style.display = "none";
+        frame.addEventListener("load", () => { frame.dataset.loaded = String(Date.now()); });
+        frame.src = liveUrl(m.url);
+        document.body.append(frame);
+        preloaded = { id: m.id, url: m.url, frame, at: Date.now() };
+    }
+    function dropPreload() {
+        if (preloaded) { preloaded.frame.remove(); preloaded = null; }
+    }
+
     function replayIn(d) {
         return new Promise(resolve => {
-            const frame = document.createElement("iframe");
-            let done = false, loadedAt = 0, sending = d, timer = 0;
+            // vorgeladen (Pipeline) und noch frisch: denselben Rahmen weiterverwenden, sonst einen neuen laden
+            const mine = preloaded && preloaded.id === d.id ? preloaded : null;   // ein Rahmen für einen anderen Entwurf bleibt stehen
+            const ready = mine && mine.url === d.url && Date.now() - mine.at < 60000 ? mine : null;
+            if (mine) { preloaded = null; if (!ready) { mine.frame.remove(); } }
+            const frame = ready ? ready.frame : document.createElement("iframe");
+            let done = false, loadedAt = ready ? Number(frame.dataset.loaded) || 0 : 0, sending = d, timer = 0;
             const finish = (status, info = "", more = {}) => {
                 if (done) { return; }
                 done = true;
@@ -571,12 +610,14 @@
                     submitIn(frame, w, sending, finish);
                 });
             };
-            frame.name = "offline-sync";
-            frame.style.display = "none";
             frame.addEventListener("load", () => { loadedAt = Date.now(); });
-            frame.src = liveUrl(d.url);
-            document.body.append(frame);
-            setTimeout(poll, 200);
+            if (!ready) {
+                frame.name = "offline-sync";
+                frame.style.display = "none";
+                frame.src = liveUrl(d.url);
+                document.body.append(frame);
+            }
+            setTimeout(poll, ready ? 0 : 200);
         });
     }
 
@@ -725,6 +766,7 @@
         const esc = apex.util.escapeHTML;
         const stored = (await (await caches.open(CACHE)).keys()).filter(r => r.url.startsWith(location.origin + BASE)).length;
         const estimate = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate().catch(() => null) : null;
+        const indexed = await indexStore("readonly", s => s.count()).catch(() => 0);   // Lesebestand vorhanden: Suche anbieten
         storageLow = !!estimate && !!estimate.quota && estimate.usage / estimate.quota > 0.9;
         const mb = bytes => (bytes >= 1e9 ? (bytes / 1e9).toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " GB" : Math.round(bytes / 1e6) + " MB");
         const dialog = document.createElement("dialog");
@@ -743,6 +785,8 @@
             + "</p>"
             + (estimate && estimate.quota ? `<p class="offline-storage${storageLow ? " offline-login" : ""}">Speicher des Browsers: ${mb(estimate.usage || 0)} von ${mb(estimate.quota)} belegt`
                 + (storageLow ? " – knapp: offene Erfassungen übertragen lassen, dann wird Platz frei." : "") + "</p>" : "")
+            + (indexed ? '<p class="offline-search"><label>Im Vorrat suchen <input type="search" placeholder="Nummer, Kunde, Ort, Text …" autocomplete="off"></label></p>'
+                + '<ul class="offline-results" aria-live="polite"></ul>' : "")
             + (disabled ? `<p class="offline-login">Offline-Erfassung abgeschaltet: ${esc(disabled)}. APEX speichert normal; `
                 + "offene Entwürfe bleiben auf dem Gerät und werden nicht gesendet.</p>" : "")
             + (online && needLogin ? '<p class="offline-login">Die Sitzung ist abgelaufen. '
@@ -757,6 +801,20 @@
               : "<p>Keine offenen Erfassungen.</p>")
             + '<p><button type="button" class="t-Button t-Button--hot" data-act="sync">Jetzt übertragen</button> '
             + '<button type="button" class="t-Button" data-act="close">Schließen</button></p>';
+        const search = dialog.querySelector(".offline-search input");
+        if (search) {                             // Lesebestand durchsuchen: alle Wörter müssen vorkommen, höchstens 50 Treffer
+            const results = dialog.querySelector(".offline-results");
+            let timer = 0;
+            search.addEventListener("input", () => {
+                clearTimeout(timer);
+                timer = setTimeout(async () => {
+                    const q = search.value.trim();
+                    const hits = q ? await searchIndex(q) : [];
+                    results.innerHTML = hits.map(h => `<li><a href="${esc(liveUrl(h.href))}">${esc(h.title)}</a> <small>${esc(snippetOf(h, q))}</small></li>`).join("")
+                        + (q && !hits.length ? "<li>Nichts gefunden.</li>" : "");
+                }, 150);
+            });
+        }
         dialog.querySelectorAll("li[data-id]").forEach(async li => {
             const src = await thumbOf(list.find(x => x.id === li.dataset.id)).catch(() => null);
             if (src) { const img = li.querySelector(".offline-thumb"); img.src = src; img.hidden = false; }
@@ -994,6 +1052,7 @@
         const key = "offline-stock:" + env.APP_SESSION;           // Stand des Vorrats in dieser Sitzung
         let saved = {};
         try { saved = fresh ? {} : JSON.parse(sessionStorage.getItem(key) || "{}"); } catch (e) { saved = {}; }
+        if (fresh) { await indexStore("readwrite", s => s.clear()).catch(() => {}); }   // Lesebestand kommt mit den Seiten neu
         if (Array.isArray(saved)) { saved = { seen: saved }; }    // Format bis 1.8
         const seen = new Set(saved.seen || []);
         if (CONTROLLED && !fresh) { seen.add(pageKey(location.href)); }   // diese Seite hat der Service Worker schon gespeichert
@@ -1037,7 +1096,9 @@
             if (!res.ok || !html.includes(MARK)) { fail(url.href); keep(); continue; }   // Fehlerseite
             seen.add(pageKey(url.href));
             decoder = decoder || html.includes("offline-scan");
-            queue.push(...targets(new DOMParser().parseFromString(html, "text/html")));
+            const parsed = new DOMParser().parseFromString(html, "text/html");
+            await indexPage(parsed, url.href);    // Lesebestand aus dem HTML, das ohnehin geladen wurde
+            queue.push(...targets(parsed));
             keep();
         }
         if (decoder && !decoderOk && !window.BarcodeDetector && !stopped && !leaving) {   // Barcode-Decoder für offline (iPhone, Windows, Firefox)
@@ -1051,6 +1112,101 @@
         try { localStorage.setItem(STOCK_LAST, JSON.stringify(stockState)); } catch (e) { /* ohne Anzeige weiter */ }
         stocking = false;
         refresh();
+    }
+
+    /* ---------- 3h. Lesebestand: Regionen mit der CSS-Klasse offline-index sind offline durchsuchbar ----------
+     * Beim Online-Aufruf einer Seite, im Offline-Vorrat und nach jeder Übertragung werden die Zeilen (Tabelle) bzw.
+     * Beschriftungen und Werte (Formular) solcher Regionen als Text in IndexedDB abgelegt - aus dem HTML, das ohnehin
+     * geladen wird; kein Server-API, keine Bilder, keine Kennwörter, keine Data-URLs. Die Liste der Entwürfe sucht
+     * darin ("Im Vorrat suchen", Treffer führen auf die gespeicherte Seite), Tabellen bekommen ein Filterfeld. */
+
+    const INDEX_MAX = 3000;                       // Zeichen je Eintrag
+    async function indexStore(mode, fn) {         // eigene Transaktion: der Lesebestand hat mit den Entwürfen nichts zu tun
+        const tx = (await db).transaction("index", mode);
+        const req = fn(tx.objectStore("index"));
+        return new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve(req && req.result);
+            tx.onerror = tx.onabort = () => reject(tx.error || new Error("IndexedDB-Transaktion abgebrochen"));
+        });
+    }
+    const clean = t => (t || "").replace(/data:[^\s"']+/g, "").replace(/\s+/g, " ").trim();
+    // Die Datentabelle einer Region: mit Kopfzeile und den meisten Zeilen (Berichte haben daneben kleine Hilfstabellen, z. B. zum Blättern)
+    const reportTable = region => [...region.querySelectorAll("table")]
+        .filter(t => t.tBodies.length && t.tBodies[0].rows.length)
+        .sort((a, b) => (!!b.tHead - !!a.tHead) || (b.tBodies[0].rows.length - a.tBodies[0].rows.length))[0] || null;
+
+    function entriesOf(region, href) {            // Tabelle: eine Zeile je Eintrag; sonst Beschriftungen und Werte der Region
+        const doc = region.ownerDocument;
+        const table = reportTable(region);
+        if (table) {
+            return [...table.querySelectorAll("tbody tr")].map(tr => {
+                const cells = [...tr.querySelectorAll("td")].map(td => clean(td.textContent)).filter(Boolean);
+                const a = tr.querySelector("a[href]");
+                let target = href;
+                try { target = a ? new URL(a.getAttribute("href"), href).href : href; } catch (e) { /* kein Seitenlink */ }
+                return cells.length ? { title: cells[0].slice(0, 80), text: cells.join(" · ").slice(0, INDEX_MAX), href: target } : null;
+            }).filter(Boolean);
+        }
+        const parts = [];
+        let first = "";
+        for (const label of region.querySelectorAll("label[for]")) {
+            const el = doc.getElementById(label.htmlFor);
+            if (!el || /^(password|file|hidden)$/.test(el.type || "")) { continue; }
+            const value = clean(el.tagName === "SELECT" ? [...el.selectedOptions].map(o => o.textContent).join(", ") : el.value);
+            if (!value) { continue; }
+            parts.push(clean(label.textContent) + ": " + value);
+            if (el.tagName !== "SELECT") { first = first || value; }   // kennzeichnender Wert: ein Text, keine Auswahl
+        }
+        const copy = region.cloneNode(true);      // Anzeigetexte ohne Eingabefelder und Auswahllisten (alle Optionen wären Rauschen)
+        copy.querySelectorAll("script, style, select, textarea, input, button, .offline-drafts-list, .offline-filter").forEach(n => n.remove());
+        parts.push(clean(copy.textContent));
+        const text = parts.join(" · ").slice(0, INDEX_MAX);
+        return text ? [{ title: (clean(doc.title) + (first ? ": " + first.slice(0, 40) : "")).slice(0, 80), text, href }] : [];
+    }
+
+    async function indexPage(doc, href) {         // Einträge dieser Seite erneuern: alte weg, neue hin; Fehler stören nichts
+        const regions = [...doc.querySelectorAll(".offline-index")];
+        if (!regions.length || env.APP_USER === "nobody") { return; }
+        const key = pageKey(href), now = Date.now();
+        const entries = regions.flatMap(r => entriesOf(r, href)).slice(0, 2000)
+            .map((e, n) => ({ ...e, id: key + "#" + n, key, user: env.APP_USER, lower: (e.title + " " + e.text).toLowerCase(), ts: now }));
+        await indexStore("readwrite", s => {
+            const req = s.index("key").openCursor(IDBKeyRange.only(key));
+            req.onsuccess = () => { const c = req.result; if (c) { c.delete(); c.continue(); } else { entries.forEach(e => s.put(e)); } };
+            return req;
+        }).catch(() => {});
+    }
+
+    async function searchIndex(q) {               // alle Wörter müssen vorkommen; nur Einträge dieses Benutzers
+        const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+        if (!terms.length) { return []; }
+        const all = await indexStore("readonly", s => s.getAll()).catch(() => []);
+        return all.filter(e => e.user === env.APP_USER && terms.every(t => e.lower.includes(t)))
+            .sort((a, b) => a.title.localeCompare(b.title, "de")).slice(0, 50);
+    }
+    function snippetOf(e, q) {                    // Textausschnitt um das erste Suchwort
+        const low = e.text.toLowerCase(), i = low.indexOf(q.toLowerCase().split(/\s+/)[0]);
+        const from = Math.max(0, i - 40);
+        return (from ? "… " : "") + e.text.slice(from, from + 120) + (from + 120 < e.text.length ? " …" : "");
+    }
+
+    function filterBox(region) {                  // Filterfeld über einer Tabelle: zeigt nur Zeilen, die alle Wörter enthalten
+        const table = reportTable(region);
+        if (!table || region.querySelector(".offline-filter")) { return; }
+        const box = document.createElement("input");
+        box.type = "search";
+        box.className = "offline-filter";
+        box.placeholder = "Zeilen filtern …";
+        box.autocomplete = "off";
+        box.setAttribute("aria-label", "Zeilen dieser Liste filtern");
+        table.before(box);
+        box.addEventListener("input", () => {
+            const terms = box.value.toLowerCase().split(/\s+/).filter(Boolean);
+            for (const tr of table.tBodies[0].rows) {
+                const t = tr.textContent.toLowerCase();
+                tr.style.display = terms.every(w => t.includes(w)) ? "" : "none";
+            }
+        });
     }
 
     /* ---------- 3e. Offene Neuanlagen am Ort: Region mit der CSS-Klasse offline-drafts ----------
@@ -1190,6 +1346,8 @@
         document.querySelectorAll(".offline-scan").forEach(scanButton);
         document.querySelectorAll("img[src]").forEach(img => { if (img.complete && !img.naturalWidth) { unavailable(img); } });
         document.querySelectorAll(".offline-lightbox img").forEach(zoomable);
+        document.querySelectorAll(".offline-index").forEach(filterBox);
+        if (!IS_COPY && !IN_FRAME) { indexPage(document, location.href); }   // Lesebestand: diese Seite, frisch vom Server
         if (isForm()) {
             snapshot = readItems();
             await restore();
@@ -1202,6 +1360,7 @@
             const userKey = "offline-user-" + env.APP_ID;
             if (localStorage.getItem(userKey) && localStorage.getItem(userKey) !== env.APP_USER) {
                 caches.delete(CACHE);
+                indexStore("readwrite", s => s.clear()).catch(() => {});
                 localStorage.removeItem(STOCK_LAST);
                 stockState = null;
             }

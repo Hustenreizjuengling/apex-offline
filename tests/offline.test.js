@@ -696,7 +696,7 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
         const fullPage = await fullCtx.newPage();
         fullPage.on("pageerror", e => errors.push(e.message));
         await login(fullPage);
-        await waitFor(async () => { const t = await pill(fullPage); return /^Online/.test(t) && settled(t); }, 60000, "Vorrat");
+        await waitFor(async () => (await pill(fullPage)).trim() === "Online", 90000, "Vorrat vollständig");   // sonst fehlt offline eine Seite
         await fullCtx.setOffline(true);
         await fullPage.reload();
         await openOrder(fullPage, "A-1005");
@@ -782,6 +782,41 @@ const photoBytes = page => page.evaluate(() => atob(apex.item("P4_FOTO").getValu
             const afterLock = (await serverValues(desk, RUN)).fotos.filter(f => f.text.endsWith("Gesperrt " + RUN));
             check(afterLock.length === 1, "nach der Sperre automatisch übertragen: Foto genau einmal im Protokoll");
         }
+
+        console.log("15. Lesebestand (offline-index): offline Zeilen filtern und im Vorrat suchen");
+        await gotoList(page);                                       // online: Liste wird beim Aufruf indiziert
+        await page.waitForSelector(".offline-status");
+        await field.setOffline(true);
+        await page.reload();
+        await page.waitForSelector(".offline-status");
+        const visible = async () => page.locator(".offline-index tbody tr:visible").count();   // sichtbare Datenzeilen (ohne Hilfstabellen)
+        const rowsBefore = await visible();
+        await page.fill(".offline-index .offline-filter", "A-1002");
+        await waitFor(async () => await visible() === 1, 5000, "Filter").catch(() => {});
+        check(rowsBefore >= 5 && await visible() === 1 && /Zählerwechsel/.test(await page.locator(".offline-index tbody tr:visible").innerText()),
+            `Filterfeld offline: von ${rowsBefore} Zeilen bleibt A-1002 (Zählerwechsel)`);
+        await page.fill(".offline-index .offline-filter", "");
+        await waitFor(async () => await visible() === rowsBefore, 5000, "Filter zurück");
+        await page.locator(".offline-status").click();
+        await page.locator(".offline-panel").waitFor();
+        const searchBox = page.locator(".offline-panel .offline-search input");
+        check(await searchBox.count() === 1, "Liste der Entwürfe hat „Im Vorrat suchen“");
+        await searchBox.fill("Klinikum");
+        await page.locator(".offline-panel .offline-results li", { hasText: "A-1003" }).first().waitFor({ timeout: 5000 });
+        const hit = await page.locator(".offline-panel .offline-results li").allInnerTexts();   // Zeile der Liste und das Formular des Auftrags
+        check(hit.length === 2 && hit.every(h => /A-1003/.test(h)) && hit.some(h => /Störung Lüftung/.test(h)) && hit.some(h => /Kunde: Klinikum/.test(h)),
+            "Suche „Klinikum“: Zeile der Liste und Formular des Auftrags: " + hit.join(" | ").replace(/\s+/g, " ").slice(0, 140));
+        await searchBox.fill("Abbruch " + RUN);                     // steht nur im Befund, also nur im Formular (Seite 2) - nach der Übertragung erneuert
+        await page.locator(".offline-panel .offline-results li", { hasText: "A-1005" }).waitFor({ timeout: 5000 }).catch(() => {});
+        const formHit = await page.locator(".offline-panel .offline-results li").allInnerTexts();
+        check(formHit.length === 1 && /A-1005/.test(formHit[0]) && /Befund[^:]*: Abbruch/.test(formHit[0]), "Suche im Formular-Lesebestand (Befund nach der Übertragung): " + formHit.join(" | ").replace(/\s+/g, " ").slice(0, 120));
+        await a11y(page, "Liste der Entwürfe mit Suche");
+        await Promise.all([page.waitForURL(/auftrag\?/), page.locator(".offline-panel .offline-results a").first().click()]);
+        await page.waitForSelector(".offline-status");
+        check(await page.inputValue("#P2_NR") === "A-1005" && await page.inputValue("#P2_BEFUND") === "Abbruch " + RUN && IS_COPY_PAGE(await page.content()),
+            "Treffer führt offline auf die gespeicherte Seite mit dem aktuellen Stand");
+        await field.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
 
         console.log("14. Aufräumen: Testaufträge samt Fotos im Büro löschen");
         for (const nr of [RUN + "C", RUN + "B", RUN]) {
