@@ -122,10 +122,6 @@
     const due = d => d.status === "wartet" || (d.status === "fehler" && !!d.retryAt && d.retryAt <= Date.now());   // jetzt zu senden
     const retrying = d => d.status === "fehler" && !!d.retryAt && d.retryAt > Date.now();                      // wartet auf den nächsten Versuch
     let storageLow = false;                       // Browser-Speicher über 90 % belegt (navigator.storage.estimate)
-    const STOCK_LAST = "offline-stock-last:" + env.APP_ID;   // Ergebnis des letzten Vorrats, auch für gespeicherte Seiten
-    let stockState = null;                        // { at: zuletzt vollständig, complete, limit }
-    try { stockState = JSON.parse(localStorage.getItem(STOCK_LAST) || "null"); } catch (e) { stockState = null; }
-    const stockIncomplete = () => !!stockState && !stockState.complete;
 
     /* ---------- Hilfen ---------- */
 
@@ -148,6 +144,22 @@
     // Neu laden nur, wenn dabei nichts verloren geht: nichts geändert, kein Dialog, Kamera oder Scanner, sichtbar
     const canReload = () => !apex.page.isChanged() && !document.querySelector("iframe:not([name=offline-sync]), dialog[open], .offline-scan-overlay")
         && document.visibilityState === "visible" && Date.now() - pickedAt > 120000;
+    const reload = () => { reloading = true; location.reload(); };
+    // Gespeicherte Fassung, die mit Verbindung durch den aktuellen Stand ersetzt werden darf: Seiten nur für online immer,
+    // sonst nur, wenn dabei nichts verloren geht (nie auf Erfassungsseiten, z. B. mitten im Foto)
+    const staleCopy = () => IS_COPY && (document.body.classList.contains("online-only") || (!isForm() && canReload()));
+    const actOf = event => (event.target.closest("[data-act]") || { dataset: {} }).dataset.act;   // data-act der angeklickten Schaltfläche
+    const timeout = ms => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+    const readJson = (storage, key, fallback) => { try { return JSON.parse(storage.getItem(key) || "null") ?? fallback; } catch (e) { return fallback; } };
+    const writeJson = (storage, key, value) => { try { storage.setItem(key, JSON.stringify(value)); } catch (e) { /* voll oder gesperrt: ohne weiter */ } };
+    const windowOf = frame => { try { const w = frame.contentWindow; w.document.title; return w; } catch (e) { return null; } };   // null: fremde Seite (Hotspot, Proxy)
+    const isLoginDoc = doc => !doc.getElementById("offline-page") && !!doc.querySelector("input[type=password]");   // Sitzung abgelaufen
+    const serverNow = ([name, current]) => ({ type: "error", location: ["inline", "page"], pageItem: name,
+        message: "Auf dem Server inzwischen: " + (current || "(leer)") });   // ohne "unsafe: false" maskiert APEX den Text (Server-Wert!)
+    const showErrors = list => { apex.message.clearErrors(); apex.message.showErrors(list); };
+    const STOCK_LAST = "offline-stock-last:" + env.APP_ID;   // Ergebnis des letzten Vorrats, auch für gespeicherte Seiten
+    let stockState = readJson(localStorage, STOCK_LAST, null);   // { at: zuletzt vollständig, complete, limit, dropped }
+    const stockIncomplete = () => !!stockState && !stockState.complete;
 
     function pageKey(href) {                      // eine Seite = Pfad + fachliche Parameter
         const url = new URL(href, location.href);
@@ -198,14 +210,16 @@
     });
     db.catch(() => {});                           // gemeldet wird der Fehler in allDrafts
 
-    async function store(mode, fn) {              // fn(drafts, meta) liefert die Anfrage, deren Ergebnis zurückkommt
-        const tx = (await db).transaction(["drafts", "meta"], mode);
-        const req = fn(tx.objectStore("drafts"), tx.objectStore("meta"));
+    async function tx(stores, mode, fn) {         // fn(...objectStores) liefert die Anfrage, deren Ergebnis zurückkommt
+        const t = (await db).transaction(stores, mode);
+        const req = fn(...stores.map(n => t.objectStore(n)));
         return new Promise((resolve, reject) => {
-            tx.oncomplete = () => resolve(req.result);
-            tx.onerror = tx.onabort = () => reject(tx.error || new Error("IndexedDB-Transaktion abgebrochen"));
+            t.oncomplete = () => resolve(req && req.result);
+            t.onerror = t.onabort = () => reject(t.error || new Error("IndexedDB-Transaktion abgebrochen"));
         });
     }
+    const store = (mode, fn) => tx(["drafts", "meta"], mode, fn);      // Entwürfe samt Index
+    const indexStore = (mode, fn) => tx(["index"], mode, fn);          // Lesebestand (3h): eigene Transaktion
     const allDrafts = () => store("readonly", (s, m) => m.getAll())   // nur der Index: ohne Werte, ohne Fotos
         .then(list => list.filter(d => d.user === env.APP_USER).sort((a, b) => a.ts - b.ts))
         .catch(e => {                             // Speicher nicht nutzbar: abschalten (APEX speichert normal), nie still
@@ -381,16 +395,7 @@
         const spinner = apex.util.showSpinner();
         let result;
         try {
-            // Den Entwurf noch unter der Sende-Sperre abschließen: ein zweites Fenster sähe sonst kurz "sendet" ohne Sperre
-            result = await replay(d, async r => {
-                // Nur eine echte Ablehnung (Meldungen der Seite) darf den neuen Entwurf löschen. Kam statt der Seite etwas
-                // anderes (Proxy, Hotspot, Fehlerseite), bleibt er unten als "fehler" erhalten - sonst wären die Eingaben weg.
-                if (r.status === "ok" || (r.status === "fehler" && r.messages && !existed && !r.transient)) { await settle(d); }
-                else if (r.status === "fehler" && r.messages) { await settle(d, rejected(d, r)); }
-                else if (r.status === "konflikt") { await settle(d, { status: "konflikt", info: r.info }); }
-                else if (r.status !== "neu") { await settle(d, { status: r.status, info: r.info, resend: r.resend }); }
-                return r;
-            });
+            result = await replay(d, r => conclude(d, r, !existed));
         } finally { spinner.remove(); capturing = false; }
         if (result.status === "ok") {
             draft = null;
@@ -399,15 +404,11 @@
             if (result.url) { location.href = result.url; } else { leave("Gespeichert."); }   // die Seite, die der Rahmen danach zeigte
         } else if (result.status === "fehler" && result.messages && !result.transient) {   // vom Server abgelehnt: Meldungen hier, Eingaben bleiben
             if (!existed) { draft = null; }
-            apex.message.clearErrors();
-            apex.message.showErrors((result.messages || [result.info]).map(message => ({ type: "error", location: "page", message })));
+            showErrors(result.messages.map(message => ({ type: "error", location: "page", message })));
         } else if (result.status === "konflikt") { // am Feld zeigen; erneut speichern übernimmt den eigenen Wert
             result.conflicts.forEach(([name, current]) => { snapshot[name] = current; });
-            apex.message.clearErrors();
-            apex.message.showErrors(result.conflicts.map(([name, current]) => ({ type: "error", location: ["inline", "page"], pageItem: name,
-                message: "Auf dem Server inzwischen: " + (current || "(leer)") })));
+            showErrors(result.conflicts.map(serverNow));
         } else {                                  // wartet, unklar, fehler beim Setzen der Werte, neu
-            if (result.info === "Anmeldung erforderlich") { needLogin = true; }
             apex.page.cancelWarnOnUnsavedChanges();
             leave(result.status === "fehler" ? (result.transient ? "Gespeichert – der Server war kurz nicht bereit, wird automatisch erneut übertragen: "
                     : "Gespeichert – bitte in der Liste der Entwürfe prüfen: ") + result.info
@@ -454,16 +455,14 @@
             return;
         }
         say(IS_COPY ? "Offline-Entwurf geladen." : "Offline-Werte eingesetzt – bitte prüfen und speichern.");
-        const problems = [                        // ohne "unsafe: false" maskiert APEX den Text (Server-Wert!)
-            ...result.conflicts.map(([name, current]) => ({ type: "error", location: ["inline", "page"], pageItem: name,
-                message: "Auf dem Server inzwischen: " + (current || "(leer)") })),
-            ...result.lost.map(name => ({ type: "error", location: "page",
-                message: "Offline-Wert nicht übernommen: " + labels([name]) }))
+        const problems = [
+            ...result.conflicts.map(serverNow),
+            ...result.lost.map(name => ({ type: "error", location: "page", message: "Offline-Wert nicht übernommen: " + labels([name]) }))
         ];
         if (draft.status === "fehler" && draft.info) {   // vom Server abgelehnt: den Grund zeigen
             problems.push({ type: "error", location: "page", message: draft.info });
         }
-        if (problems.length) { apex.message.showErrors(problems); }
+        if (problems.length) { showErrors(problems); }
     }
 
     /* ---------- 2. Übertragen: jeden Entwurf durch seine eigene Seite absenden ---------- */
@@ -489,20 +488,10 @@
                 // etwa die Ladezeit der Seite; der Index kennt Status, Zeitpunkt und Adresse)
                 const next = list.slice(i + 1).find(m => due(m) && !(draft && m.id === draft.id));
                 if (next) { preload(next); }
-                const result = await replay(d, async r => {   // abschließen, solange die Sende-Sperre noch gehalten wird
-                    if (r.status === "ok") { await settle(d); }
-                    else if (r.status === "fehler" && r.messages) { await settle(d, rejected(d, r)); }
-                    else if (r.status !== "neu") { await settle(d, { status: r.status, info: r.info, resend: r.resend }); }
-                    return r;
-                });
+                const result = await replay(d, r => conclude(d, r, false));
                 if (result.status === "neu") { continue; }   // inzwischen neu gespeichert: nächste Runde
-                if (result.status === "ok") {
-                    sent++;
-                    refetch(d, result);
-                } else {
-                    if (result.info === "Anmeldung erforderlich") { needLogin = true; }
-                    if (result.status === "wartet") { break; } // Anmeldung oder Verbindung fehlt: später erneut
-                }
+                if (result.status === "ok") { sent++; refetch(d, result); }
+                else if (result.status === "wartet") { break; }   // Anmeldung oder Verbindung fehlt: später erneut
                 refresh();                        // die Zahl offener Entwürfe sinkt sichtbar
             }
         };
@@ -520,13 +509,7 @@
         if (sent) {
             const text = sent === 1 ? "1 Erfassung übertragen." : sent + " Erfassungen übertragen.";
             // neu laden zeigt den aktuellen Stand - nicht, wenn dabei etwas verloren ginge
-            if (canReload()) {
-                sessionStorage.setItem("offline-flash", text);
-                reloading = true;
-                location.reload();
-            } else {
-                say(text);
-            }
+            if (canReload()) { sessionStorage.setItem("offline-flash", text); reload(); } else { say(text); }
         }
     }
 
@@ -551,18 +534,33 @@
     const replay = (d, then) => (navigator.locks
         ? navigator.locks.request(sendLock(d), async () => then(await replayIn(d)))
         : replayIn(d).then(then));
+    // Ergebnis einer Übertragung im Entwurf festhalten (noch unter der Sperre: ein zweites Fenster sähe sonst kurz "sendet"
+    // ohne Sperre). fresh: der Entwurf entstand gerade auf dieser Seite - nur eine echte, dauerhafte Ablehnung (Meldungen der
+    // Seite) löscht ihn dann, die Eingaben stehen ja noch im Formular. Kam statt der Seite etwas anderes (Proxy, Hotspot,
+    // Fehlerseite), bleibt er als "fehler" erhalten - sonst wären die Eingaben weg.
+    async function conclude(d, r, fresh) {
+        if (r.info === "Anmeldung erforderlich") { needLogin = true; }
+        if (r.status === "neu") { return r; }
+        if (r.status === "ok" || (fresh && r.status === "fehler" && r.messages && !r.transient)) { await settle(d); }
+        else { await settle(d, r.status === "fehler" && r.messages ? rejected(d, r) : { status: r.status, info: r.info, resend: r.resend }); }
+        return r;
+    }
+
+    function syncFrame(url) {                     // unsichtbarer Rahmen für eine Seite der App; dort meldet offline.js nur "bereit"
+        const frame = document.createElement("iframe");
+        frame.name = "offline-sync";
+        frame.style.display = "none";
+        frame.addEventListener("load", () => { frame.dataset.loaded = String(Date.now()); });
+        frame.src = url;
+        document.body.append(frame);
+        return frame;
+    }
 
     let preloaded = null;                         // { id, url, frame, at }: Seite des nächsten Entwurfs, lädt schon
     function preload(m) {
         if (preloaded && preloaded.id === m.id) { return; }
         dropPreload();
-        const frame = document.createElement("iframe");
-        frame.name = "offline-sync";
-        frame.style.display = "none";
-        frame.addEventListener("load", () => { frame.dataset.loaded = String(Date.now()); });
-        frame.src = liveUrl(m.url);
-        document.body.append(frame);
-        preloaded = { id: m.id, url: m.url, frame, at: Date.now() };
+        preloaded = { id: m.id, url: m.url, frame: syncFrame(liveUrl(m.url)), at: Date.now() };
     }
     function dropPreload() {
         if (preloaded) { preloaded.frame.remove(); preloaded = null; }
@@ -574,8 +572,8 @@
             const mine = preloaded && preloaded.id === d.id ? preloaded : null;   // ein Rahmen für einen anderen Entwurf bleibt stehen
             const ready = mine && mine.url === d.url && Date.now() - mine.at < 60000 ? mine : null;
             if (mine) { preloaded = null; if (!ready) { mine.frame.remove(); } }
-            const frame = ready ? ready.frame : document.createElement("iframe");
-            let done = false, loadedAt = ready ? Number(frame.dataset.loaded) || 0 : 0, sending = d, timer = 0;
+            const frame = ready ? ready.frame : syncFrame(liveUrl(d.url));
+            let done = false, sending = d, timer = 0;
             const finish = (status, info = "", more = {}) => {
                 if (done) { return; }
                 done = true;
@@ -586,18 +584,18 @@
             timer = setTimeout(() => finish("wartet", "Keine Antwort vom Server"), 60000);   // Seite lädt nicht
             const poll = () => {
                 if (done) { return; }
-                let w;
-                try { w = frame.contentWindow; w.document.title; } catch (e) { return finish("fehler", "Seite nicht erreichbar"); }
+                const w = windowOf(frame);
+                if (!w) { return finish("fehler", "Seite nicht erreichbar"); }
                 if (!w.offlineReady) {            // Fehlerseite ohne APEX: nach 15 s aufgeben
+                    const loadedAt = Number(frame.dataset.loaded) || 0;
                     return loadedAt && Date.now() - loadedAt > 15000
                         ? finish("fehler", "Seite nicht aufrufbar (" + (w.document.title || "Fehler") + ")")
                         : setTimeout(poll, 200);
                 }
                 if (w.offlineReady === "copy") { return finish("wartet", "Server antwortet nicht"); }
+                if (isLoginDoc(w.document)) { return finish("wartet", "Anmeldung erforderlich"); }
                 if (!w.document.getElementById("offline-page") || String(w.apex.env.APP_PAGE_ID) !== d.page) {
-                    return w.document.querySelector("input[type=password]")
-                        ? finish("wartet", "Anmeldung erforderlich")
-                        : finish("fehler", "Seite nicht aufrufbar (" + w.document.title + ")");
+                    return finish("fehler", "Seite nicht aufrufbar (" + w.document.title + ")");
                 }
                 // "sendet" erst unmittelbar vor dem Absenden: nur dieser Moment macht den Ausgang unklar.
                 // Die aktuelle Seite entscheidet, ob sie doppelt Gesendetes erkennt (auch für ältere Entwürfe).
@@ -610,13 +608,6 @@
                     submitIn(frame, w, sending, finish);
                 });
             };
-            frame.addEventListener("load", () => { loadedAt = Date.now(); });
-            if (!ready) {
-                frame.name = "offline-sync";
-                frame.style.display = "none";
-                frame.src = liveUrl(d.url);
-                document.body.append(frame);
-            }
             setTimeout(poll, ready ? 0 : 200);
         });
     }
@@ -657,14 +648,12 @@
         const done = () => !frame.isConnected;    // finish entfernt den Rahmen
         const watch = async () => {
             if (done()) { return; }
-            let nw;
-            try { nw = frame.contentWindow; nw.document.title; } catch (e) { return finish(unsure(d), "Seite nicht erreichbar"); }
+            const nw = windowOf(frame);
+            if (!nw) { return finish(unsure(d), "Seite nicht erreichbar"); }
             if (!nw.offlineSubmitted && nw.offlineReady) {
-                // neues Dokument: mit reloadOnSubmit "S" lädt APEX nur nach erfolgreicher Verarbeitung neu.
-                // Ohne Kennung und mit Passwortfeld ist es die Anmeldeseite: die Sitzung war abgelaufen.
-                if (!nw.document.getElementById("offline-page") && nw.document.querySelector("input[type=password]")) {
-                    return finish("wartet", "Anmeldung erforderlich");
-                }
+                // neues Dokument: mit reloadOnSubmit "S" lädt APEX nur nach erfolgreicher Verarbeitung neu - oder die
+                // Anmeldeseite, wenn die Sitzung inzwischen abgelaufen war
+                if (isLoginDoc(nw.document)) { return finish("wartet", "Anmeldung erforderlich"); }
                 return finish("ok", "", { url: nw.location.href, canonical: nw.offlineUrl });
             }
             // alle 5 s: ist der Server noch da? Zweimal hintereinander nicht erreichbar heißt Verbindung weg
@@ -691,9 +680,7 @@
         let ok = navigator.onLine;
         if (ok) {
             try {               // HEAD geht am Service Worker vorbei; ab 500 antwortet ORDS, aber nicht die Datenbank
-                const res = await fetch(OWN_FILE, {
-                    method: "HEAD", cache: "no-store", signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined
-                });
+                const res = await fetch(OWN_FILE, { method: "HEAD", cache: "no-store", signal: timeout(5000) });
                 ok = res.status < 500;
             } catch (e) {
                 ok = false;
@@ -705,13 +692,7 @@
         if (ok !== online) {
             online = ok;
             refresh();
-            // Verbindung zurück auf einer gespeicherten Fassung: aktuellen Stand laden - bei Seiten nur für online
-            // immer, sonst nur, wenn dabei nichts verloren geht (nie auf Erfassungsseiten, z. B. mitten im Foto)
-            if (ok && IS_COPY && (document.body.classList.contains("online-only") || (!isForm() && canReload()))) {
-                reloading = true;
-                location.reload();
-                return ok;
-            }
+            if (ok && staleCopy()) { reload(); return ok; }   // Verbindung zurück auf einer gespeicherten Fassung: aktuellen Stand laden
             if (ok) { resume(); }
         }
         return ok;
@@ -721,6 +702,8 @@
 
     // Browser-Speicher über 90 % belegt: warnen, bevor ein Foto nicht mehr gespeichert werden kann. Eigener Takt (Start, alle
     // 30 s, beim Öffnen der Liste), damit refresh() nicht auf die Schätzung warten muss.
+    const whenReachable = async fn => { if (await check()) { fn(); } else { say("Server nicht erreichbar."); } };
+
     async function checkStorage() {
         if (!navigator.storage || !navigator.storage.estimate) { return; }
         const low = await navigator.storage.estimate().then(e => !!e.quota && e.usage / e.quota > 0.9, () => false);
@@ -820,7 +803,7 @@
             if (src) { const img = li.querySelector(".offline-thumb"); img.src = src; img.hidden = false; }
         });
         dialog.addEventListener("click", async event => {
-            const act = (event.target.closest("[data-act]") || { dataset: {} }).dataset.act;
+            const act = actOf(event);
             const d = list.find(x => x.id === (event.target.closest("li") || { dataset: {} }).dataset.id);
             if (act === "login") {                // APEX zeigt die Anmeldung und kehrt danach hierher zurück
                 location.href = liveUrl(location.href);
@@ -844,11 +827,11 @@
                         if (full) { await putDraft({ ...full, status: "wartet", info: "", tries: 0, retryAt: 0 }); }
                     }));
                 needLogin = false;
-                if (await check()) { sync(); } else { say("Server nicht erreichbar."); }
+                whenReachable(sync);
             }
             if (act === "restock") {              // alles neu vom Server, z. B. nach Änderungen der Disposition
                 dialog.close();
-                if (await check()) { whenControlled(() => stock(true)); } else { say("Server nicht erreichbar."); }
+                whenReachable(() => whenControlled(() => stock(true)));
             }
             if (act === "close") { dialog.close(); }
         });
@@ -859,19 +842,32 @@
 
     /* ---------- 3a. Unterschrift: CSS-Klasse offline-signature an einer Textarea ---------- */
 
-    function signaturePad(node) {
+    // Bedienelement an einem Item (Textarea oder Textfeld): das Feld wird versteckt, der Kasten dahinter gesetzt.
+    // set(value) schreibt ins Item; setzt APEX das Item selbst (Entwurf eingesetzt), zeigt watch(show) den neuen Wert.
+    function widget(node, className, html) {
         const input = node.matches("textarea, input") ? node : node.querySelector("textarea, input");
-        if (!input || !input.id) { return; }
+        if (!input || !input.id) { return null; }
         const box = document.createElement("div");
-        box.className = "offline-signature-pad";
-        box.innerHTML = '<canvas width="600" height="200"></canvas>'
-            + '<button type="button" class="t-Button t-Button--small">Unterschrift löschen</button>';
+        box.className = className;
+        box.innerHTML = html;
         input.style.display = "none";
         input.after(box);
-        const canvas = box.firstChild, ctx = canvas.getContext("2d");
+        let own = false;
+        return {
+            input, box,
+            set(value) { own = true; apex.item(input.id).setValue(value); own = false; },
+            watch(show) { $(input).on("change", () => { if (!own) { show(input.value); } }); show(input.value); }
+        };
+    }
+
+    function signaturePad(node) {
+        const w = widget(node, "offline-signature-pad", '<canvas width="600" height="200"></canvas>'
+            + '<button type="button" class="t-Button t-Button--small">Unterschrift löschen</button>');
+        if (!w) { return; }
+        const canvas = w.box.firstChild, ctx = canvas.getContext("2d");
         canvas.setAttribute("role", "img");
-        canvas.setAttribute("aria-label", labels([input.id]) + " – Unterschriftenfeld, mit Finger oder Stift zeichnen");
-        let last = null, own = false, drawn = false;   // drawn: seit dem letzten Löschen wurde ein Strich gezogen
+        canvas.setAttribute("aria-label", labels([w.input.id]) + " – Unterschriftenfeld, mit Finger oder Stift zeichnen");
+        let last = null, drawn = false;           // drawn: seit dem letzten Löschen wurde ein Strich gezogen
         const blank = () => { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); drawn = false; };
         const show = value => {
             blank();
@@ -881,7 +877,6 @@
                 img.src = value;
             }
         };
-        const save = value => { own = true; apex.item(input.id).setValue(value); own = false; };
         const point = ev => {
             const r = canvas.getBoundingClientRect();
             return [(ev.clientX - r.left) * canvas.width / r.width, (ev.clientY - r.top) * canvas.height / r.height];
@@ -898,12 +893,11 @@
         canvas.addEventListener("pointerup", () => {
             if (!last) { return; }
             last = null;
-            if (drawn) { save(canvas.toDataURL("image/png")); }   // nur Tippen ist keine Unterschrift
+            if (drawn) { w.set(canvas.toDataURL("image/png")); }   // nur Tippen ist keine Unterschrift
         });
         canvas.addEventListener("pointercancel", () => { last = null; });
-        box.lastChild.addEventListener("click", () => { blank(); save(""); });
-        $(input).on("change", () => { if (!own) { show(input.value); } });
-        show(input.value);
+        w.box.lastChild.addEventListener("click", () => { blank(); w.set(""); });
+        w.watch(show);
     }
 
     /* ---------- 3b. Foto: CSS-Klasse offline-photo an einer Textarea ----------
@@ -914,32 +908,31 @@
     const PHOTO_MAX = 1600, PHOTO_QUALITY = 0.8;
     const THUMB_MAX = 160;                        // Vorschaubild im Index der Entwürfe (einige KB)
 
-    async function thumbnail(dataUrl) {           // kleines JPEG für Liste der Entwürfe und offline-drafts
+    async function resize(src, max, quality) {    // Bild mit längster Seite höchstens max Pixel als JPEG-Data-URL
         const source = new Image();
-        source.src = dataUrl;
+        source.src = src;
         await source.decode();
-        const scale = Math.min(1, THUMB_MAX / Math.max(source.naturalWidth, source.naturalHeight));
+        const scale = Math.min(1, max / Math.max(source.naturalWidth, source.naturalHeight));
         const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
         canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
         canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
-        return canvas.toDataURL("image/jpeg", 0.7);
+        return canvas.toDataURL("image/jpeg", quality);
+    }
+    const thumbnail = dataUrl => resize(dataUrl, THUMB_MAX, 0.7);   // kleines JPEG für Liste der Entwürfe und offline-drafts
+    async function shrink(blob) {                 // aufgenommenes oder gewähltes Foto
+        const url = URL.createObjectURL(blob);
+        try { return await resize(url, PHOTO_MAX, PHOTO_QUALITY); } finally { URL.revokeObjectURL(url); }
     }
 
     function photoField(node) {
-        const input = node.matches("textarea, input") ? node : node.querySelector("textarea, input");
-        if (!input || !input.id) { return; }
-        const box = document.createElement("div");
-        box.className = "offline-photo-box";
-        box.innerHTML = '<img alt="" hidden>'
+        const w = widget(node, "offline-photo-box", '<img alt="" hidden>'
             + '<button type="button" class="t-Button t-Button--iconLeft"><span class="t-Icon t-Icon--left fa fa-camera" aria-hidden="true"></span>'
-            + '<span class="t-Button-label">Foto aufnehmen oder auswählen</span></button><input type="file" accept="image/*" hidden>';
-        input.style.display = "none";
-        input.after(box);
-        const img = box.querySelector("img"), file = box.querySelector("input[type=file]"), pick = box.querySelector("button");
-        img.alt = labels([input.id]);
+            + '<span class="t-Button-label">Foto aufnehmen oder auswählen</span></button><input type="file" accept="image/*" hidden>');
+        if (!w) { return; }
+        const img = w.box.querySelector("img"), file = w.box.querySelector("input[type=file]"), pick = w.box.querySelector("button");
+        img.alt = labels([w.input.id]);
         pick.addEventListener("click", () => { pickedAt = Date.now(); file.click(); });   // Schaltfläche: per Tastatur erreichbar
-        let own = false;
         const show = value => {
             img.hidden = !/^data:image\//.test(value || "");
             if (!img.hidden) { img.src = value; }
@@ -949,28 +942,10 @@
             const chosen = file.files[0];
             file.value = "";
             if (!chosen) { return; }
-            try {
-                const url = await shrink(chosen);
-                own = true; apex.item(input.id).setValue(url); own = false;
-                show(url);
-            } catch (e) {
-                apex.message.alert("Das Bild konnte nicht gelesen werden.");
-            }
+            try { const url = await shrink(chosen); w.set(url); show(url); }
+            catch (e) { apex.message.alert("Das Bild konnte nicht gelesen werden."); }
         });
-        $(input).on("change", () => { if (!own) { show(input.value); } });
-        show(input.value);
-    }
-
-    async function shrink(blob) {                 // längste Seite höchstens PHOTO_MAX Pixel, JPEG
-        const source = new Image();
-        source.src = URL.createObjectURL(blob);
-        try { await source.decode(); } finally { URL.revokeObjectURL(source.src); }
-        const scale = Math.min(1, PHOTO_MAX / Math.max(source.naturalWidth, source.naturalHeight));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.round(source.naturalWidth * scale);
-        canvas.height = Math.round(source.naturalHeight * scale);
-        canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
-        return canvas.toDataURL("image/jpeg", PHOTO_QUALITY);
+        w.watch(show);
     }
 
     /* ---------- 3c. Barcode/QR: CSS-Klasse offline-scan an einem Textfeld ---------- */
@@ -1050,10 +1025,8 @@
         stocking = true;
         refresh();
         const key = "offline-stock:" + env.APP_SESSION;           // Stand des Vorrats in dieser Sitzung
-        let saved = {};
-        try { saved = fresh ? {} : JSON.parse(sessionStorage.getItem(key) || "{}"); } catch (e) { saved = {}; }
+        const saved = fresh ? {} : readJson(sessionStorage, key, {});
         if (fresh) { await indexStore("readwrite", s => s.clear()).catch(() => {}); }   // Lesebestand kommt mit den Seiten neu
-        if (Array.isArray(saved)) { saved = { seen: saved }; }    // Format bis 1.8
         const seen = new Set(saved.seen || []);
         if (CONTROLLED && !fresh) { seen.add(pageKey(location.href)); }   // diese Seite hat der Service Worker schon gespeichert
         // diese Seite und alle Links in offline-prefetch - auch die Region "Offline-Vorrat" auf Seite 0 (Menüseiten)
@@ -1068,9 +1041,7 @@
         let decoder = !!saved.decoder || !!document.querySelector(".offline-scan");
         let decoderOk = !!saved.decoderOk;        // Decoder in dieser Sitzung schon geholt
         let stopped = false, limit = false;
-        const keep = () => {
-            try { sessionStorage.setItem(key, JSON.stringify({ seen: [...seen], rest: [...failed, ...queue], decoder, decoderOk, tries, dropped: [...dropped] })); } catch (e) { /* voll: weiter ohne */ }
-        };
+        const keep = () => writeJson(sessionStorage, key, { seen: [...seen], rest: [...failed, ...queue], decoder, decoderOk, tries, dropped: [...dropped] });
         while (queue.length) {
             let url;
             try { url = new URL(queue[0], document.baseURI); } catch (e) { queue.shift(); continue; }
@@ -1082,7 +1053,7 @@
             if (seen.size >= STOCK_LIMIT) { limit = true; break; }
             let res, html;
             try {
-                res = await fetch(url.href, { headers: { "x-offline-prefetch": "1" }, signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined });
+                res = await fetch(url.href, { headers: { "x-offline-prefetch": "1" }, signal: timeout(60000) });
                 html = await res.text();
             } catch (e) {
                 if (leaving) { break; }           // Seite gewechselt: der nächste Aufruf macht hier weiter
@@ -1109,7 +1080,7 @@
         keep();
         const complete = !stopped && !limit && !failed.size && (decoderOk || !decoder || !!window.BarcodeDetector);
         stockState = { at: complete ? Date.now() : (stockState && stockState.at) || 0, complete, limit, dropped: dropped.size };
-        try { localStorage.setItem(STOCK_LAST, JSON.stringify(stockState)); } catch (e) { /* ohne Anzeige weiter */ }
+        writeJson(localStorage, STOCK_LAST, stockState);
         stocking = false;
         refresh();
     }
@@ -1121,14 +1092,6 @@
      * darin ("Im Vorrat suchen", Treffer führen auf die gespeicherte Seite), Tabellen bekommen ein Filterfeld. */
 
     const INDEX_MAX = 3000;                       // Zeichen je Eintrag
-    async function indexStore(mode, fn) {         // eigene Transaktion: der Lesebestand hat mit den Entwürfen nichts zu tun
-        const tx = (await db).transaction("index", mode);
-        const req = fn(tx.objectStore("index"));
-        return new Promise((resolve, reject) => {
-            tx.oncomplete = () => resolve(req && req.result);
-            tx.onerror = tx.onabort = () => reject(tx.error || new Error("IndexedDB-Transaktion abgebrochen"));
-        });
-    }
     const clean = t => (t || "").replace(/data:[^\s"']+/g, "").replace(/\s+/g, " ").trim();
     // Die Datentabelle einer Region: mit Kopfzeile und den meisten Zeilen (Berichte haben daneben kleine Hilfstabellen, z. B. zum Blättern)
     const reportTable = region => [...region.querySelectorAll("table")]
@@ -1387,8 +1350,7 @@
                 + '<button type="button" class="t-Button" data-act="back">Zurück</button> '
                 + '<button type="button" class="t-Button" data-act="retry">Erneut versuchen</button>';
             notice.addEventListener("click", e => {
-                const act = (e.target.closest("[data-act]") || { dataset: {} }).dataset.act;
-                if (act === "back") { history.back(); } else if (act === "retry") { location.reload(); }
+                if (actOf(e) === "back") { history.back(); } else if (actOf(e) === "retry") { location.reload(); }
             });
             document.body.prepend(notice);
         }
@@ -1402,18 +1364,16 @@
         await refresh();
         checkStorage();
         if (await check()) {
-            if (IS_COPY && (document.body.classList.contains("online-only") || (!isForm() && canReload()))) {
+            if (staleCopy()) {                    // gespeicherte Fassung trotz Verbindung: einmal je Minute den aktuellen Stand versuchen
                 const retry = "offline-retry:" + pageKey(location.href);
                 if (Date.now() - Number(sessionStorage.getItem(retry) || 0) > 60000) {
                     sessionStorage.setItem(retry, String(Date.now()));
-                    reloading = true;
-                    location.reload();
+                    reload();
                     return;
                 }
             }
             if (!IS_COPY && env.APP_USER !== "nobody") {   // online gespeichert und weitergegangen: neuen Stand speichern
-                let again = [];
-                try { again = JSON.parse(sessionStorage.getItem("offline-refetch") || "[]"); } catch (e) { again = []; }
+                const again = readJson(sessionStorage, "offline-refetch", []);
                 sessionStorage.removeItem("offline-refetch");
                 whenControlled(() => refetchNow(again));
             }

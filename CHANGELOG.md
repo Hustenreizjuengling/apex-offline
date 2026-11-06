@@ -3,6 +3,24 @@
 Versionsnummer wie im README „Release und Update“: Fehlerkorrektur erhöht die dritte Stelle (1.14.1), neues
 Verhalten die zweite (1.15.0). Die Version steht in `apex_toolkit/application.apx` und in der Fußzeile der App.
 
+## 1.17.1 – 2026-11-06
+
+Aufräumen ohne neues Verhalten: `offline.js` ist um rund 50 Zeilen kürzer, weil Mehrfaches zusammengezogen wurde.
+Die Browser-Prüfung (109 Prüfungen) und der Massentest laufen unverändert durch.
+
+- **Ein Abschluss je Übertragung:** `conclude()` hält das Ergebnis einer Übertragung im Entwurf fest – vorher stand die
+  Zuordnung (ok löschen, Ablehnung mit Wiederholung, sonst Status übernehmen) zweimal, beim Online-Speichern und in der
+  Übertragungsschleife, mit einer kleinen Abweichung. Auch „Anmeldung erforderlich“ wird nur noch dort gemerkt.
+- **Ein Rahmen, ein Fenster, eine Anmeldeseite:** `syncFrame()` baut den unsichtbaren Übertragungsrahmen (Pipeline und
+  Übertragung), `windowOf()` greift auf sein Fenster zu (null bei einer Fremdseite), `isLoginDoc()` erkennt die
+  Anmeldeseite – statt dreier gleicher Prüfungen.
+- **Ein Bedienelement-Gerüst:** `widget()` versteckt das Item, setzt den Kasten dahinter und hält ihn mit dem Item in
+  Takt; Unterschrift und Foto bauen darauf auf. `resize()` verkleinert Foto und Vorschaubild.
+- **Kleine Hilfen:** `tx()` für beide IndexedDB-Transaktionen, `readJson()`/`writeJson()` für Session- und Local
+  Storage, `staleCopy()`/`reload()` für das Ersetzen einer gespeicherten Fassung, `serverNow()`/`showErrors()` für
+  Konfliktmeldungen, `actOf()`, `timeout()`, `whenReachable()`. In `offline-sw.js` ein Gerüst für beide Hinweisseiten.
+- Entfernt: die Übernahme des Vorrats-Formats aus 1.8 (lag im Session Storage, kann heute nicht mehr vorkommen).
+
 ## 1.17.0 – 2026-11-02
 
 Neues Verhalten: Lesebestand (Regionen mit `offline-index`) und Pipeline-Versand. Die Browser-Datenbank bekommt

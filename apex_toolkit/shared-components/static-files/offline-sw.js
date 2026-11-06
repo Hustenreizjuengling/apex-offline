@@ -33,20 +33,16 @@ const STORABLE = ["script", "style", "font", "manifest"];                // Teil
 const RETRY = '<script>addEventListener("online", () => location.reload());'
     + 'setInterval(() => { if (navigator.onLine) { location.reload(); } }, 15000);</script>';
 
-const OFFLINE_PAGE = '<!doctype html><html lang="de"><meta charset="utf-8">'
-    + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Keine Verbindung</title>'
+const notice = (title, text, cls) => '<!doctype html><html lang="de"><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' + title + '</title>'
     + '<body style="font:16px system-ui,sans-serif;margin:3rem auto;max-width:32rem;padding:0 1rem">'
-    + '<h1>Keine Verbindung</h1><p>Diese Seite wurde noch nicht online aufgerufen und ist deshalb offline nicht verfügbar.</p>'
-    + '<p><button onclick="history.back()">Zurück</button> <button onclick="location.reload()">Erneut versuchen</button></p>' + RETRY;
-
+    + '<div class="' + cls + '"><h1>' + title + '</h1><p>' + text + '</p>'
+    + '<p><button onclick="history.back()">Zurück</button> <button onclick="location.reload()">Erneut versuchen</button></p></div>' + RETRY;
+const OFFLINE_PAGE = notice("Keine Verbindung", "Diese Seite wurde noch nicht online aufgerufen und ist deshalb offline nicht verfügbar.", "offline-notice");
 // Seiten mit der Page-CSS-Klasse online-only: offline nie die gespeicherte Fassung (veraltete Zahlen), sondern
 // dieser Hinweis. Kommt die Verbindung zurück, lädt er die Seite neu.
-const ONLINE_ONLY_PAGE = '<!doctype html><html lang="de"><meta charset="utf-8">'
-    + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Nur online verfügbar</title>'
-    + '<body style="font:16px system-ui,sans-serif;margin:3rem auto;max-width:32rem;padding:0 1rem">'
-    + '<div class="online-only-notice"><h2>Nur online verfügbar</h2><p>Diese Seite braucht eine Verbindung zum Server. '
-    + 'Die offline verfügbaren Seiten erreichen Sie mit „Zurück“.</p>'
-    + '<p><button onclick="history.back()">Zurück</button> <button onclick="location.reload()">Erneut versuchen</button></p></div>' + RETRY;
+const ONLINE_ONLY_PAGE = notice("Nur online verfügbar", "Diese Seite braucht eine Verbindung zum Server. "
+    + "Die offline verfügbaren Seiten erreichen Sie mit „Zurück“.", "online-only-notice");
 const ONLINE_ONLY = /<body\b[^>]*\bclass="[^"]*\bonline-only\b/i;           // eigene Klasse am body (Page CSS Classes)
 
 const HTML = { "Content-Type": "text/html; charset=utf-8" };
